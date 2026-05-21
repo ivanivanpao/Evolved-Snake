@@ -61,6 +61,13 @@ function toggleSettings() {
   unlockAudio() // 點擊設定按鈕時主動預載與解鎖音效，優雅升級 Autoplay 體驗
 }
 
+// --- 太陽能量商店系統響應式狀態 ---
+const sunCoins = ref(0) // 目前擁有的太陽能量點數 (每 50 分特效獲得 1 ☀️)
+const shieldActive = ref(false) // 日冕無敵護盾狀態
+const shieldTimeLeft = ref(0) // 護盾剩餘描述
+let shieldTimer: number | null = null
+let shieldCountdownInterval: number | null = null
+
 // 宣告音效元件的快取
 let sunAudio: HTMLAudioElement | null = null
 let lastPlayedSrc = '' // 記錄上一次播放的音效路徑，防止連續重複播放相同音效
@@ -189,6 +196,172 @@ function playEatSound() {
   }
 }
 
+// 播放【太陽蛻皮】合成音效（下行滑音模擬沙沙蛻皮感）
+function playPeelSound() {
+  if (soundMuted.value) return
+  try {
+    if (typeof window === 'undefined') return
+    const WebAudioContext = window.AudioContext || (window as any).webkitAudioContext
+    if (!WebAudioContext) return
+    if (!audioCtx) audioCtx = new WebAudioContext()
+    if (audioCtx.state === 'suspended') audioCtx.resume()
+
+    const osc = audioCtx.createOscillator()
+    const gainNode = audioCtx.createGain()
+    
+    osc.connect(gainNode)
+    gainNode.connect(audioCtx.destination)
+    
+    osc.type = 'triangle' // 使用三角波，音色更柔和沙沙感
+    const now = audioCtx.currentTime
+    
+    // 下行快速滑音：600Hz 快速衰減到 150Hz，模擬蛻去身體的滑動感
+    osc.frequency.setValueAtTime(600, now)
+    osc.frequency.exponentialRampToValueAtTime(150, now + 0.25)
+    
+    gainNode.gain.setValueAtTime(0.15, now)
+    gainNode.gain.exponentialRampToValueAtTime(0.001, now + 0.25)
+    
+    osc.start(now)
+    osc.stop(now + 0.25)
+  } catch (e) {
+    console.warn('合成蛻皮音效失敗:', e)
+  }
+}
+
+// 播放【烈日緩速】合成音效（低沉漸慢波動，模擬時空凝結）
+function playSlowSound() {
+  if (soundMuted.value) return
+  try {
+    if (typeof window === 'undefined') return
+    const WebAudioContext = window.AudioContext || (window as any).webkitAudioContext
+    if (!WebAudioContext) return
+    if (!audioCtx) audioCtx = new WebAudioContext()
+    if (audioCtx.state === 'suspended') audioCtx.resume()
+
+    const osc = audioCtx.createOscillator()
+    const gainNode = audioCtx.createGain()
+    
+    osc.connect(gainNode)
+    gainNode.connect(audioCtx.destination)
+    
+    osc.type = 'sawtooth' // 鋸齒波，加點低通濾波模擬沉重感
+    const now = audioCtx.currentTime
+    
+    // 漸慢頻率波動：從 220Hz 漸變至 80Hz
+    osc.frequency.setValueAtTime(220, now)
+    osc.frequency.linearRampToValueAtTime(80, now + 0.35)
+    
+    gainNode.gain.setValueAtTime(0.1, now)
+    gainNode.gain.exponentialRampToValueAtTime(0.001, now + 0.35)
+    
+    osc.start(now)
+    osc.stop(now + 0.35)
+  } catch (e) {
+    console.warn('合成緩速音效失敗:', e)
+  }
+}
+
+// 播放【日冕護盾】合成音效（高亢白金充能顫音，科幻發光防護感）
+function playShieldSound() {
+  if (soundMuted.value) return
+  try {
+    if (typeof window === 'undefined') return
+    const WebAudioContext = window.AudioContext || (window as any).webkitAudioContext
+    if (!WebAudioContext) return
+    if (!audioCtx) audioCtx = new WebAudioContext()
+    if (audioCtx.state === 'suspended') audioCtx.resume()
+
+    const osc = audioCtx.createOscillator()
+    const osc2 = audioCtx.createOscillator() // 雙振盪器合成和弦顫音
+    const gainNode = audioCtx.createGain()
+    
+    osc.connect(gainNode)
+    osc2.connect(gainNode)
+    gainNode.connect(audioCtx.destination)
+    
+    osc.type = 'sine'
+    osc2.type = 'triangle'
+    
+    const now = audioCtx.currentTime
+    // 高亢上升充能 C6(1046.50Hz) 快速滑到 C7(2093.00Hz)，並有微調音差
+    osc.frequency.setValueAtTime(1046.50, now)
+    osc.frequency.exponentialRampToValueAtTime(2093.00, now + 0.4)
+    
+    osc2.frequency.setValueAtTime(1050.00, now)
+    osc2.frequency.exponentialRampToValueAtTime(2100.00, now + 0.4)
+    
+    gainNode.gain.setValueAtTime(0.12, now)
+    gainNode.gain.exponentialRampToValueAtTime(0.001, now + 0.4)
+    
+    osc.start(now)
+    osc2.start(now)
+    osc.stop(now + 0.4)
+    osc2.stop(now + 0.4)
+  } catch (e) {
+    console.warn('合成護盾音效失敗:', e)
+  }
+}
+
+// 兌換技能 1：太陽蛻皮 (消耗 1 ☀️，縮短身體 30%)
+function usePeelSkill() {
+  if (sunCoins.value < 1) return
+  sunCoins.value -= 1
+  playPeelSound()
+  
+  // 削減身體 30% 長度（最少保留基礎長度 3）
+  const originalLength = snake.value.length
+  const keepCount = Math.max(3, Math.ceil(originalLength * 0.7))
+  snake.value = snake.value.slice(0, keepCount)
+}
+
+// 兌換技能 2：烈日緩速 (消耗 2 ☀️，增加移動間隔 50ms)
+function useSlowDownSkill() {
+  if (sunCoins.value < 2) return
+  sunCoins.value -= 2
+  playSlowSound()
+  
+  // 強制降速（增加 moveSnake 的間隔），上限為基礎速度 baseSpeed
+  speed.value = Math.min(baseSpeed, speed.value + 50)
+  if (gameStatus.value === 'playing' && gameInterval) {
+    clearInterval(gameInterval)
+    gameInterval = setInterval(moveSnake, speed.value) as unknown as number
+  }
+}
+
+// 兌換技能 3：日冕護盾 (消耗 3 ☀️，獲得 5 秒無敵)
+function useShieldSkill() {
+  if (sunCoins.value < 3) return
+  sunCoins.value -= 3
+  playShieldSound()
+  
+  // 啟用無敵護盾
+  shieldActive.value = true
+  shieldTimeLeft.value = 5
+  
+  // 清理先前的計時器
+  if (shieldTimer) clearTimeout(shieldTimer)
+  if (shieldCountdownInterval) clearInterval(shieldCountdownInterval)
+  
+  // 5 秒無敵倒數計時器
+  shieldCountdownInterval = setInterval(() => {
+    if (shieldTimeLeft.value > 1) {
+      shieldTimeLeft.value -= 1
+    } else {
+      shieldTimeLeft.value = 0
+      if (shieldCountdownInterval) {
+        clearInterval(shieldCountdownInterval)
+        shieldCountdownInterval = null
+      }
+    }
+  }, 1000) as unknown as number
+
+  shieldTimer = setTimeout(() => {
+    shieldActive.value = false
+    shieldTimer = null
+  }, 5000) as unknown as number
+}
+
 // 百分慶祝太陽特效
 const showSunCelebration = ref(false)
 const celebrationKey = ref(0)  // 每次觸發遞增，強制 Vue 重新掛載元件
@@ -274,6 +447,20 @@ function initGame() {
   direction.value = { x: 1, y: 0 }
   nextDirection.value = { x: 1, y: 0 }
   score.value = 0
+  
+  // 重置太陽點數與無敵護盾狀態
+  sunCoins.value = 0
+  shieldActive.value = false
+  shieldTimeLeft.value = 0
+  if (shieldTimer) {
+    clearTimeout(shieldTimer)
+    shieldTimer = null
+  }
+  if (shieldCountdownInterval) {
+    clearInterval(shieldCountdownInterval)
+    shieldCountdownInterval = null
+  }
+  
   generateFood()
 }
 
@@ -301,8 +488,11 @@ function moveSnake() {
   }
 
   if (snake.value.some((s) => s.x === newHead.x && s.y === newHead.y)) {
-    gameOver()
-    return
+    // 若日冕無敵護盾處於啟用狀態，則容許安全穿透身體，不引發遊戲結束
+    if (!shieldActive.value) {
+      gameOver()
+      return
+    }
   }
 
   snake.value.unshift(newHead)
@@ -349,7 +539,14 @@ function moveSnake() {
     }
 
     if (shouldTrigger) {
+      sunCoins.value += 1 // 每次觸發太陽慶祝特效（每 50 分），獲得 1 個太陽能量 ☀️
       triggerSunCelebration(isSpecial, isOnlyBlack, isWhite, isOverlapBlackWhite)
+      
+      // 當分數剛好達到 300 分或其倍數的曬黑週期點時，自動暫停遊戲以彈出曬黑警告畫面
+      if (score.value >= 300 && score.value % 300 === 0) {
+        pauseGame()
+      }
+
       // 僅在開啟加速功能時才執行加速
       if (enableSpeedUp.value && speed.value > 50) {
         speed.value -= 15
@@ -424,6 +621,21 @@ function handleInput(e: KeyboardEvent) {
 
   const key = e.key.toLowerCase()
 
+  // --- 太陽神殿技能商店快捷鍵 ---
+  if (e.key === 'Shift') {
+    e.preventDefault() // 阻止預設行為 (例如避免觸發某些瀏覽器快捷功能)
+    usePeelSkill()
+    return
+  }
+  if (key === 'q') {
+    useSlowDownSkill()
+    return
+  }
+  if (key === 'e') {
+    useShieldSkill()
+    return
+  }
+
   if ((key === 'arrowup' || key === 'w') && direction.value.y !== 1) {
     nextDirection.value = { x: 0, y: -1 }
   } else if ((key === 'arrowdown' || key === 's') && direction.value.y !== -1) {
@@ -446,6 +658,9 @@ onUnmounted(() => {
   }
   // 清理慶祝計時器
   if (celebrationTimer) clearTimeout(celebrationTimer)
+  // 清理無敵護盾計時器與倒數計時器
+  if (shieldTimer) clearTimeout(shieldTimer)
+  if (shieldCountdownInterval) clearInterval(shieldCountdownInterval)
 })
 
 const cells = computed(() => {
@@ -488,6 +703,9 @@ const cells = computed(() => {
         <!-- 工具列：分數 + 整合型設定選單 -->
         <div class="toolbar">
           <div class="score">分數: {{ score }}</div>
+          <div class="score sun-energy-bar" title="太陽能量：每 50 分特效可獲得 1 ☀️">
+            ☀️ 太陽能量: <span class="sun-coin-count">{{ sunCoins }}</span>
+          </div>
           
           <div class="settings-container">
             <button
@@ -561,7 +779,7 @@ const cells = computed(() => {
           </div>
         </div>
         <!-- 遊戲棋盤 -->
-        <div class="game-board" :class="{ 'show-grid': showGrid }">
+        <div class="game-board" :class="{ 'show-grid': showGrid, 'shield-active-board': shieldActive }">
           <div
             v-for="cell in cells"
             :key="`${cell.x}-${cell.y}`"
@@ -573,6 +791,13 @@ const cells = computed(() => {
               'snake-head': cell.isSnakeHead,
             }"
           ></div>
+
+          <!-- 護盾剩餘時間提示 Overlay -->
+          <Transition name="fade">
+            <div v-if="shieldActive" class="shield-status-overlay">
+              🛡️ 日冕護盾中: {{ shieldTimeLeft }}秒
+            </div>
+          </Transition>
 
           <!-- 遊戲狀態 Overlay (精準蓋在棋盤正中間) -->
           <div v-if="gameStatus === 'waiting'" class="overlay">
@@ -597,10 +822,10 @@ const cells = computed(() => {
         <div class="info-block">
           <h2 class="info-title">🐍 遊戲說明</h2>
           <ul class="info-list">
-            <li>控制蛇吃掉食物來得分</li>
-            <li>蛇會不斷前進，無法停止</li>
-            <li>撞到自己的身體即遊戲結束</li>
-            <li>撞到邊界會從另一邊穿透出現 🌀</li>
+            <li>吃食物得分 (每個 +10分) 🍎</li>
+            <li>撞邊界會從相反側穿透出現 🌀</li>
+            <li>撞到自己的身體即遊戲結束 💀</li>
+            <li>每得 100 分，蛇的前進速度會加快 📈</li>
           </ul>
         </div>
 
@@ -618,44 +843,78 @@ const cells = computed(() => {
                 <kbd class="key">S</kbd>
                 <kbd class="key">D</kbd>
               </div>
-              <p class="key-label">或方向鍵移動</p>
+              <p class="key-label" :class="{ blink: gameStatus === 'waiting' }">
+                {{ gameStatus === 'waiting' ? '▶ 按方向鍵開始' : '或方向鍵控制移動' }}
+              </p>
             </div>
+            
+            <!-- 暫停 / 繼續 -->
             <div class="key-group">
               <div class="key-row">
                 <kbd class="key wide">Space</kbd>
               </div>
-              <p class="key-label">暫停 / 繼續</p>
+              <p class="key-label" :class="{ 'blink-paused': gameStatus === 'paused' }">
+                {{ gameStatus === 'paused' ? '⏸ 暫停中 (按空白鍵繼續)' : '遊戲暫停 / 繼續' }}
+              </p>
             </div>
           </div>
         </div>
 
-        <!-- 計分說明 -->
-        <div class="info-block">
-          <h2 class="info-title">🏆 計分規則</h2>
-          <table class="score-table">
-            <tbody>
-              <tr>
-                <td><span class="food-dot"></span> 吃到食物</td>
-                <td class="score-val">+10 分</td>
-              </tr>
-              <tr>
-                <td>📈 每 100 分</td>
-                <td class="score-val">加速</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
+        <!-- ⛩️ 太陽神殿（技能兌換商店） -->
+        <div class="info-block sun-temple">
+          <h2 class="info-title">⛩️ 太陽神殿</h2>
+          <div class="temple-shop">
+            <!-- 技能 1: 太陽蛻皮 (消耗 1 ☀️ / Shift) -->
+            <div class="shop-item" :class="{ 'affordable': sunCoins >= 1 }">
+              <div class="shop-item-info">
+                <span class="shop-item-title">🐍 太陽蛻皮</span>
+                <span class="shop-item-desc">縮短身體 30%</span>
+              </div>
+              <button
+                class="shop-buy-btn"
+                :disabled="sunCoins < 1 || gameStatus !== 'playing'"
+                @click="usePeelSkill"
+                title="太陽蛻皮 (快捷鍵: Shift)"
+              >
+                <span class="cost">1 ☀️</span>
+                <kbd class="shop-kbd">Shift</kbd>
+              </button>
+            </div>
 
-        <!-- 開始提示 -->
-        <div class="info-block start-hint" v-if="gameStatus === 'waiting'">
-          <p class="blink">▶ 按方向鍵開始</p>
-        </div>
-        <div class="info-block start-hint" v-if="gameStatus === 'paused'">
-          <p class="blink">⏸ 遊戲暫停中</p>
-        </div>
-        <div class="info-block start-hint gameover" v-if="gameStatus === 'gameover'">
-          <p>💀 遊戲結束</p>
-          <p class="final-score">最終得分：{{ score }}</p>
+            <!-- 技能 2: 烈日緩速 (消耗 2 ☀️ / Q) -->
+            <div class="shop-item" :class="{ 'affordable': sunCoins >= 2 }">
+              <div class="shop-item-info">
+                <span class="shop-item-title">⏳ 烈日緩速</span>
+                <span class="shop-item-desc">移動間隔 +50ms</span>
+              </div>
+              <button
+                class="shop-buy-btn"
+                :disabled="sunCoins < 2 || gameStatus !== 'playing'"
+                @click="useSlowDownSkill"
+                title="烈日緩速 (快捷鍵: Q)"
+              >
+                <span class="cost">2 ☀️</span>
+                <kbd class="shop-kbd">Q</kbd>
+              </button>
+            </div>
+
+            <!-- 技能 3: 日冕護盾 (消耗 3 ☀️ / E) -->
+            <div class="shop-item" :class="{ 'affordable': sunCoins >= 3 }">
+              <div class="shop-item-info">
+                <span class="shop-item-title">🛡️ 日冕護盾</span>
+                <span class="shop-item-desc">5秒無敵穿透身體</span>
+              </div>
+              <button
+                class="shop-buy-btn"
+                :disabled="sunCoins < 3 || gameStatus !== 'playing'"
+                @click="useShieldSkill"
+                title="日冕護盾 (快捷鍵: E)"
+              >
+                <span class="cost">3 ☀️</span>
+                <kbd class="shop-kbd">E</kbd>
+              </button>
+            </div>
+          </div>
         </div>
       </aside>
     </div>
@@ -1020,9 +1279,9 @@ const cells = computed(() => {
   width: 220px;
   display: flex;
   flex-direction: column;
-  gap: 14px;
-  /* 與棋盤頂部對齊（工具列高度） */
-  padding-top: 62px;
+  gap: 10px; /* 縮小區塊間距 */
+  /* 與棋盤頂部對齊，稍微提升頂端位置 */
+  padding-top: 40px;
 }
 
 /* 每個說明區塊 */
@@ -1030,7 +1289,7 @@ const cells = computed(() => {
   background: rgba(0, 0, 0, 0.6);
   border: 1px solid rgba(0, 255, 255, 0.15);
   border-radius: 8px;
-  padding: 14px 16px;
+  padding: 10px 12px; /* 緊湊化內邊距 */
 }
 
 /* 說明標題 */
@@ -1039,10 +1298,10 @@ const cells = computed(() => {
   font-size: 13px;
   font-weight: 700;
   letter-spacing: 1.5px;
-  margin: 0 0 10px 0;
+  margin: 0 0 8px 0;
   text-shadow: 0 0 8px rgba(0, 255, 255, 0.6);
   border-bottom: 1px solid rgba(0, 255, 255, 0.15);
-  padding-bottom: 8px;
+  padding-bottom: 6px;
 }
 
 /* 遊戲說明清單 */
@@ -1052,7 +1311,7 @@ const cells = computed(() => {
   color: rgba(255, 255, 255, 0.7);
   font-size: 12px;
   font-family: sans-serif;
-  line-height: 1.9;
+  line-height: 1.7; /* 稍微縮小行高 */
   letter-spacing: 0;
 }
 
@@ -1060,7 +1319,7 @@ const cells = computed(() => {
 .controls {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 10px; /* 縮小控制項間距 */
 }
 
 .key-group {
@@ -1184,6 +1443,24 @@ const cells = computed(() => {
 @keyframes blink {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.3; }
+}
+
+/* 暫停閃爍動畫 */
+.blink-paused {
+  animation: blinkPaused 1.2s ease-in-out infinite;
+  color: #c084fc !important;
+  text-shadow: 0 0 8px rgba(168, 85, 247, 0.6);
+}
+
+@keyframes blinkPaused {
+  0%, 100% {
+    opacity: 1;
+    text-shadow: 0 0 8px rgba(168, 85, 247, 0.6);
+  }
+  50% {
+    opacity: 0.35;
+    text-shadow: 0 0 2px rgba(168, 85, 247, 0.2);
+  }
 }
 
 /* 分數與設定按鈕的工具列 */
@@ -1692,5 +1969,250 @@ const cells = computed(() => {
     drop-shadow(0 0 30px rgba(255, 255, 255, 1))
     drop-shadow(0 0 60px rgba(180, 230, 255, 0.85))
     drop-shadow(0 0 100px rgba(255, 200, 230, 0.6));
+}
+
+/* ===== 太陽能量槽與白金霓虹樣式 ===== */
+.sun-energy-bar {
+  color: #ffcc00 !important;
+  border-color: rgba(255, 204, 0, 0.5) !important;
+  text-shadow:
+    0 0 10px #ffcc00,
+    0 0 20px #ffaa00,
+    0 0 40px rgba(255, 120, 0, 0.6) !important;
+  box-shadow:
+    0 0 12px rgba(255, 204, 0, 0.25),
+    inset 0 0 15px rgba(255, 204, 0, 0.1) !important;
+}
+
+.sun-coin-count {
+  font-size: 32px;
+  font-weight: 900;
+  color: #ffffff;
+  text-shadow:
+    0 0 10px #ffffff,
+    0 0 20px #ffcc00,
+    0 0 30px #ffaa00;
+  display: inline-block;
+  animation: sunCoinPulse 2s ease-in-out infinite;
+}
+
+@keyframes sunCoinPulse {
+  0%, 100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.1);
+    color: #ffeb3b;
+  }
+}
+
+/* ===== 護盾剩餘時間 Overlay ===== */
+.shield-status-overlay {
+  position: absolute;
+  top: 15px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(20, 15, 5, 0.85);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 215, 0, 0.5);
+  padding: 8px 18px;
+  border-radius: 9999px;
+  color: #ffd700;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  z-index: 8;
+  box-shadow:
+    0 4px 15px rgba(0, 0, 0, 0.5),
+    0 0 12px rgba(255, 215, 0, 0.35);
+  text-shadow: 0 0 6px rgba(255, 215, 0, 0.8);
+  animation: shieldStatusPulse 1.5s ease-in-out infinite;
+}
+
+@keyframes shieldStatusPulse {
+  0%, 100% {
+    opacity: 0.9;
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.5), 0 0 8px rgba(255, 215, 0, 0.25);
+  }
+  50% {
+    opacity: 1;
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.5), 0 0 18px rgba(255, 215, 0, 0.55);
+  }
+}
+
+/* ===== ⛩️ 太陽神殿（技能商店）樣式 ===== */
+.sun-temple {
+  border-color: rgba(255, 204, 0, 0.25) !important;
+  background: rgba(10, 8, 2, 0.75) !important;
+  box-shadow: 
+    0 0 15px rgba(0, 0, 0, 0.6),
+    0 0 8px rgba(255, 204, 0, 0.05);
+}
+
+.sun-temple .info-title {
+  color: #ffcc00 !important;
+  text-shadow: 0 0 8px rgba(255, 204, 0, 0.6) !important;
+  border-bottom-color: rgba(255, 204, 0, 0.2) !important;
+}
+
+.temple-shop {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.shop-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 10px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 6px;
+  transition: all 0.3s ease;
+}
+
+/* 當能量足夠購買時的高亮樣式 */
+.shop-item.affordable {
+  background: rgba(255, 204, 0, 0.03);
+  border-color: rgba(255, 204, 0, 0.15);
+}
+
+.shop-item-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  text-align: left;
+  max-width: 110px;
+}
+
+.shop-item-title {
+  font-size: 11px;
+  font-weight: 700;
+  color: #ffffff;
+}
+
+.shop-item.affordable .shop-item-title {
+  color: #ffeb3b;
+  text-shadow: 0 0 4px rgba(255, 235, 59, 0.3);
+}
+
+.shop-item-desc {
+  font-size: 9px;
+  color: rgba(255, 255, 255, 0.45);
+  font-family: sans-serif;
+  line-height: 1.2;
+}
+
+/* 技能商店購買按鈕 */
+.shop-buy-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 58px;
+  height: 38px;
+  background: rgba(30, 30, 30, 0.8);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  padding: 2px;
+}
+
+.shop-buy-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.shop-buy-btn .cost {
+  font-size: 11px;
+  font-weight: 800;
+  color: rgba(255, 255, 255, 0.5);
+  font-family: 'Orbitron', sans-serif;
+}
+
+.shop-buy-btn .shop-kbd {
+  font-size: 8px;
+  color: rgba(255, 255, 255, 0.3);
+  font-family: 'Orbitron', sans-serif;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  padding: 0 4px;
+  border-radius: 2px;
+  background: rgba(0, 0, 0, 0.4);
+  margin-top: 1px;
+  transform: scale(0.9);
+}
+
+/* 當可購買時的發光按鈕樣式 */
+.shop-item.affordable .shop-buy-btn {
+  background: linear-gradient(180deg, rgba(80, 60, 20, 0.9), rgba(30, 20, 5, 0.9));
+  border: 1px solid rgba(255, 204, 0, 0.45);
+  border-bottom: 2px solid rgba(255, 170, 0, 0.6);
+  box-shadow: 0 0 8px rgba(255, 170, 0, 0.15);
+}
+
+.shop-item.affordable .shop-buy-btn .cost {
+  color: #ffeb3b;
+  text-shadow: 0 0 6px rgba(255, 235, 59, 0.6);
+}
+
+.shop-item.affordable .shop-buy-btn .shop-kbd {
+  color: #ffcc00;
+  border-color: rgba(255, 204, 0, 0.3);
+  background: rgba(0, 0, 0, 0.5);
+}
+
+/* 可購買按鈕懸停動畫 */
+.shop-item.affordable .shop-buy-btn:hover:not(:disabled) {
+  background: linear-gradient(180deg, rgba(120, 90, 30, 1), rgba(50, 30, 5, 1));
+  border-color: #ffeb3b;
+  box-shadow:
+    0 0 15px rgba(255, 204, 0, 0.55),
+    0 0 3px rgba(255, 255, 255, 0.2);
+  transform: translateY(-2px) scale(1.04);
+}
+
+.shop-item.affordable .shop-buy-btn:active:not(:disabled) {
+  transform: translateY(-0.5px) scale(1.01);
+}
+
+/* ===== 無敵狀態下蛇的白金金色流光與發光特效 ===== */
+.shield-active-board .snake {
+  background: linear-gradient(180deg, #ffffff 0%, #fff6d6 30%, #ffd966 60%, #cca010 100%) !important;
+  box-shadow:
+    0 0 16px rgba(255, 215, 0, 0.95),
+    0 0 32px rgba(255, 240, 150, 0.6),
+    inset 0 2px 4px rgba(255, 255, 255, 0.85),
+    inset 0 -2px 4px rgba(200, 150, 10, 0.9) !important;
+  animation: goldShieldFlow 1.2s ease-in-out infinite alternate !important;
+}
+
+.shield-active-board .snake-head {
+  background: radial-gradient(ellipse at 30% 30%, #ffffff 0%, #ffe894 50%, #cca010 100%) !important;
+  box-shadow:
+    0 0 25px rgba(255, 215, 0, 1),
+    0 0 50px rgba(255, 245, 170, 0.85),
+    inset 0 2px 6px rgba(255, 255, 255, 0.9),
+    inset 0 -2px 6px rgba(200, 150, 10, 0.95) !important;
+  animation: goldShieldFlow 1.2s ease-in-out infinite alternate !important;
+}
+
+.shield-active-board .snake-head::before,
+.shield-active-board .snake-head::after {
+  box-shadow:
+    0 0 12px rgba(255, 235, 59, 1),
+    0 0 24px rgba(255, 193, 7, 0.9) !important;
+}
+
+@keyframes goldShieldFlow {
+  0% {
+    filter: brightness(1) drop-shadow(0 0 2px rgba(255, 215, 0, 0.5));
+  }
+  100% {
+    filter: brightness(1.2) drop-shadow(0 0 8px rgba(255, 255, 255, 0.9));
+  }
 }
 </style>
