@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 
 const GRID_SIZE = 20
 
@@ -30,6 +30,14 @@ function closeWarningOverlay() {
   // 2. 直接以全域唯一的 sunAudio 播放 start.mp3，在點擊事件中直接達成 100% 播放與解鎖！
   isAudioUnlocked.value = true
   playStartSound()
+
+  // 3. 同步初始化並播放背景音樂 back.mp3，在點擊事件的同步一線 Callstack 中直接繞過 Autoplay 限制！
+  initAudioElements()
+  if (backAudio && bgmEnabled.value) {
+    backAudio.play().catch((e) => {
+      console.warn('背景音樂播放被瀏覽器阻擋，將於使用者操作後重試:', e)
+    })
+  }
 }
 
 const snake = ref([
@@ -72,8 +80,50 @@ function toggleSpeedUp() {
   }
 }
 
-// 音效靜音狀態，預設為開啟（非靜音）
-const soundMuted = ref(false)
+// --- 背景音樂 (BGM) 設定 ---
+const bgmEnabled = ref(true)
+const bgmVolume = ref(0.25) // 範圍 0.0 到 1.0
+
+function toggleBgm() {
+  bgmEnabled.value = !bgmEnabled.value
+  unlockAudio()
+  if (backAudio) {
+    if (!bgmEnabled.value) {
+      backAudio.pause()
+    } else {
+      if (!showWarningOverlay.value) {
+        backAudio.play().catch((e) => {
+          console.warn('播放背景音樂被阻擋:', e)
+        })
+      }
+    }
+  }
+}
+
+// --- 遊戲音效 (SFX) 設定 ---
+const sfxEnabled = ref(true)
+const sfxVolume = ref(0.3) // 範圍 0.0 到 1.0
+
+function toggleSfx() {
+  sfxEnabled.value = !sfxEnabled.value
+  unlockAudio()
+}
+
+// --- 啟動音效 (Start) 設定 ---
+const startEnabled = ref(true)
+const startVolume = ref(0.4) // 範圍 0.0 到 1.0
+
+function toggleStart() {
+  startEnabled.value = !startEnabled.value
+  unlockAudio()
+}
+
+// 監聽背景音樂的音量變動，即時反映到 BGM 實例上
+watch(bgmVolume, (newVolume) => {
+  if (backAudio) {
+    backAudio.volume = newVolume
+  }
+})
 
 // 設定選單顯示狀態，預設為關閉 (false)
 const showSettings = ref(false)
@@ -91,14 +141,24 @@ let shieldCountdownInterval: number | null = null
 
 // 宣告音效元件的快取
 let sunAudio: HTMLAudioElement | null = null
+let backAudio: HTMLAudioElement | null = null // 背景音樂 Audio 實例
 let lastPlayedSrc = '' // 記錄上一次播放的音效路徑，防止連續重複播放相同音效
 let audioCtx: AudioContext | null = null
 
 // 初始化全域音效實例
 function initAudioElements() {
-  if (typeof window !== 'undefined' && !sunAudio) {
-    sunAudio = new Audio()
-    sunAudio.preload = 'auto'
+  if (typeof window !== 'undefined') {
+    if (!sunAudio) {
+      sunAudio = new Audio()
+      sunAudio.preload = 'auto'
+    }
+    if (!backAudio) {
+      backAudio = new Audio()
+      backAudio.src = '/back.mp3'
+      backAudio.loop = true
+      backAudio.volume = bgmVolume.value // 初始化時即套用使用者設定的 BGM 音量
+      backAudio.preload = 'auto'
+    }
   }
 }
 
@@ -136,33 +196,21 @@ function unlockAudio() {
       console.warn('尚未成功解鎖音訊權限，將於使用者點擊或操作後解鎖:', e)
     })
   }
+
+  // 3. 嘗試解鎖並播放背景音樂（如果警告遮罩已關閉且背景音樂啟用中）
+  if (backAudio && !showWarningOverlay.value && bgmEnabled.value && backAudio.paused) {
+    backAudio.play().catch(() => {})
+  }
 }
 
-// 切換靜音開關
-function toggleSound() {
-  soundMuted.value = !soundMuted.value
-  unlockAudio() // 主動觸發預加載與解鎖
-}
-
-// 隨機播放太陽音效（輪流交替播放 /China.mp3 與 /China_2.mp3，防止連續重複）
-function playRandomSunSound() {
-  if (soundMuted.value) return
+// 播放太陽慶祝特效音效（依據使用者要求只使用 China.mp3，不再使用 China_2.mp3）
+function playSunSound() {
+  if (!sfxEnabled.value) return
   try {
     initAudioElements()
     if (sunAudio) {
-      // 輪流挑選下一個音效，防止 Math.random() 隨機重複讓玩家覺得音效沒變
-      let nextSrc = ''
-      if (lastPlayedSrc === '/China.mp3') {
-        nextSrc = '/China_2.mp3'
-      } else if (lastPlayedSrc === '/China_2.mp3') {
-        nextSrc = '/China.mp3'
-      } else {
-        // 第一次隨機挑選
-        nextSrc = Math.random() < 0.5 ? '/China.mp3' : '/China_2.mp3'
-      }
-      
-      lastPlayedSrc = nextSrc
-      sunAudio.src = nextSrc
+      sunAudio.volume = sfxVolume.value // 套用特效音量設定
+      sunAudio.src = '/China.mp3'
       sunAudio.currentTime = 0 // 重設播放進度以利連續播放
       sunAudio.play().catch(e => {
         console.warn('太陽音效播放被瀏覽器阻擋，將於使用者點擊或操作後解鎖:', e)
@@ -175,10 +223,11 @@ function playRandomSunSound() {
 
 // 播放進入遊戲與繼續遊戲時的 start.mp3 音效
 function playStartSound() {
-  if (soundMuted.value) return
+  if (!startEnabled.value) return
   try {
     initAudioElements()
     if (sunAudio) {
+      sunAudio.volume = startVolume.value // 套用啟動音效獨立音量設定
       sunAudio.src = '/start.mp3'
       sunAudio.currentTime = 0 // 重設播放進度以利連續或快速重啟時能重新播放
       sunAudio.play().catch((e) => {
@@ -192,7 +241,7 @@ function playStartSound() {
 
 // 播放吃到食物的清脆電子音效（採用 Web Audio API 純 JS 動態合成）
 function playEatSound() {
-  if (soundMuted.value) return
+  if (!sfxEnabled.value) return
   try {
     if (typeof window === 'undefined') return
     const WebAudioContext = window.AudioContext || (window as any).webkitAudioContext
@@ -223,8 +272,8 @@ function playEatSound() {
     osc.frequency.setValueAtTime(523.25, now)
     osc.frequency.exponentialRampToValueAtTime(783.99, now + 0.08)
     
-    // 音量控制（0.3），調大音量提升吃食物的打擊反饋感，並快速淡出防止爆音
-    gainNode.gain.setValueAtTime(0.3, now)
+    // 特效音效音量套用至 Web Audio API 合成增益（直接使用 sfxVolume 值）
+    gainNode.gain.setValueAtTime(sfxVolume.value, now)
     gainNode.gain.exponentialRampToValueAtTime(0.001, now + 0.1)
     
     osc.start(now)
@@ -236,7 +285,7 @@ function playEatSound() {
 
 // 播放【太陽蛻皮】合成音效（下行滑音模擬沙沙蛻皮感）
 function playPeelSound() {
-  if (soundMuted.value) return
+  if (!sfxEnabled.value) return
   try {
     if (typeof window === 'undefined') return
     const WebAudioContext = window.AudioContext || (window as any).webkitAudioContext
@@ -257,7 +306,7 @@ function playPeelSound() {
     osc.frequency.setValueAtTime(600, now)
     osc.frequency.exponentialRampToValueAtTime(150, now + 0.25)
     
-    gainNode.gain.setValueAtTime(0.15, now)
+    gainNode.gain.setValueAtTime(0.5 * sfxVolume.value, now)
     gainNode.gain.exponentialRampToValueAtTime(0.001, now + 0.25)
     
     osc.start(now)
@@ -269,7 +318,7 @@ function playPeelSound() {
 
 // 播放【烈日緩速】合成音效（低沉漸慢波動，模擬時空凝結）
 function playSlowSound() {
-  if (soundMuted.value) return
+  if (!sfxEnabled.value) return
   try {
     if (typeof window === 'undefined') return
     const WebAudioContext = window.AudioContext || (window as any).webkitAudioContext
@@ -290,7 +339,7 @@ function playSlowSound() {
     osc.frequency.setValueAtTime(220, now)
     osc.frequency.linearRampToValueAtTime(80, now + 0.35)
     
-    gainNode.gain.setValueAtTime(0.1, now)
+    gainNode.gain.setValueAtTime(0.33 * sfxVolume.value, now)
     gainNode.gain.exponentialRampToValueAtTime(0.001, now + 0.35)
     
     osc.start(now)
@@ -302,7 +351,7 @@ function playSlowSound() {
 
 // 播放【日冕護盾】合成音效（高亢白金充能顫音，科幻發光防護感）
 function playShieldSound() {
-  if (soundMuted.value) return
+  if (!sfxEnabled.value) return
   try {
     if (typeof window === 'undefined') return
     const WebAudioContext = window.AudioContext || (window as any).webkitAudioContext
@@ -329,7 +378,7 @@ function playShieldSound() {
     osc2.frequency.setValueAtTime(1050.00, now)
     osc2.frequency.exponentialRampToValueAtTime(2100.00, now + 0.4)
     
-    gainNode.gain.setValueAtTime(0.12, now)
+    gainNode.gain.setValueAtTime(0.4 * sfxVolume.value, now)
     gainNode.gain.exponentialRampToValueAtTime(0.001, now + 0.4)
     
     osc.start(now)
@@ -464,8 +513,8 @@ function triggerSunCelebration(special = false, onlyBlack = false, isWhite = fal
   
   showSunCelebration.value = true
   
-  // 太陽出現時隨機播放自訂的音效 (china.mp3 或 china_2.mp3)
-  playRandomSunSound()
+  // 太陽出現時播放自訂的音效 (China.mp3)
+  playSunSound()
   
   celebrationTimer = setTimeout(() => {
     showSunCelebration.value = false
@@ -696,6 +745,11 @@ onUnmounted(() => {
   if (gameInterval) {
     clearInterval(gameInterval)
   }
+  // 釋放與清理背景音樂
+  if (backAudio) {
+    backAudio.pause()
+    backAudio = null
+  }
   // 清理慶祝計時器
   if (celebrationTimer) clearTimeout(celebrationTimer)
   // 清理無敵護盾計時器與倒數計時器
@@ -730,6 +784,7 @@ const cells = computed(() => {
         <div class="warning-content">
           <div class="sunglasses-icon">🕶️</div>
           <p class="warning-text">為避免陽光照射，請戴上墨鏡遊玩</p>
+          <p class="volume-warning-text">🔊 貼心提醒：進入後將播放背景音樂，請注意音量大小</p>
           <button class="warning-btn" @click="closeWarningOverlay">
             戴上墨鏡 😎 進入遊戲
           </button>
@@ -798,20 +853,91 @@ const cells = computed(() => {
                     </button>
                   </div>
                   
-                  <!-- 音效設定 -->
+                  <!-- 背景音樂 (BGM) 設定 -->
                   <div class="settings-row">
                     <div class="settings-row-info">
-                      <span class="settings-row-title">遊戲音效</span>
-                      <span class="settings-row-desc">背景慶祝音樂與清脆吃食物音效</span>
+                      <span class="settings-row-title">背景音樂 (BGM)</span>
+                      <span class="settings-row-desc">開關並調整背景音樂 volume</span>
                     </div>
                     <button
-                      id="toggle-sound-btn"
+                      id="toggle-bgm-btn"
                       class="settings-toggle-btn sound-toggle"
-                      :class="{ active: !soundMuted }"
-                      @click="toggleSound"
+                      :class="{ active: bgmEnabled }"
+                      @click="toggleBgm"
                     >
-                      {{ soundMuted ? 'OFF' : 'ON' }}
+                      {{ bgmEnabled ? 'ON' : 'OFF' }}
                     </button>
+                  </div>
+                  <!-- 背景音樂音量滑桿 -->
+                  <div class="settings-volume-row">
+                    <span class="volume-label">BGM 音量: {{ Math.round(bgmVolume * 100) }}%</span>
+                    <input
+                      type="range"
+                      min="0"
+                      max="1"
+                      step="0.05"
+                      v-model.number="bgmVolume"
+                      class="volume-slider bgm-slider"
+                      @input="unlockAudio"
+                    />
+                  </div>
+
+                  <!-- 遊戲音效 (SFX) 設定 -->
+                  <div class="settings-row">
+                    <div class="settings-row-info">
+                      <span class="settings-row-title">遊戲音效 (SFX)</span>
+                      <span class="settings-row-desc">開關並調整吃食物與慶祝音效</span>
+                    </div>
+                    <button
+                      id="toggle-sfx-btn"
+                      class="settings-toggle-btn sound-toggle"
+                      :class="{ active: sfxEnabled }"
+                      @click="toggleSfx"
+                    >
+                      {{ sfxEnabled ? 'ON' : 'OFF' }}
+                    </button>
+                  </div>
+                  <!-- 遊戲音效音量滑桿 -->
+                  <div class="settings-volume-row">
+                    <span class="volume-label">SFX 音量: {{ Math.round(sfxVolume * 100) }}%</span>
+                    <input
+                      type="range"
+                      min="0"
+                      max="1"
+                      step="0.05"
+                      v-model.number="sfxVolume"
+                      class="volume-slider sfx-slider"
+                      @input="unlockAudio"
+                    />
+                  </div>
+
+                  <!-- 啟動音效 (Start) 設定 -->
+                  <div class="settings-row">
+                    <div class="settings-row-info">
+                      <span class="settings-row-title">啟動音效 (Start)</span>
+                      <span class="settings-row-desc">開關並調整開始與繼續遊戲音效</span>
+                    </div>
+                    <button
+                      id="toggle-start-btn"
+                      class="settings-toggle-btn sound-toggle"
+                      :class="{ active: startEnabled }"
+                      @click="toggleStart"
+                    >
+                      {{ startEnabled ? 'ON' : 'OFF' }}
+                    </button>
+                  </div>
+                  <!-- 啟動音效音量滑桿 -->
+                  <div class="settings-volume-row">
+                    <span class="volume-label">啟動音量: {{ Math.round(startVolume * 100) }}%</span>
+                    <input
+                      type="range"
+                      min="0"
+                      max="1"
+                      step="0.05"
+                      v-model.number="startVolume"
+                      class="volume-slider start-slider"
+                      @input="unlockAudio"
+                    />
                   </div>
                 </div>
               </div>
@@ -1102,6 +1228,30 @@ const cells = computed(() => {
 
 .warning-btn:active {
   transform: translateY(-1px) scale(1.01);
+}
+
+.volume-warning-text {
+  font-size: 14px;
+  color: rgba(255, 255, 255, 0.45);
+  margin: -10px 0 10px 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  text-shadow: 0 0 8px rgba(255, 255, 255, 0.1);
+  animation: pulseVolumeWarning 2.5s ease-in-out infinite;
+}
+
+@keyframes pulseVolumeWarning {
+  0%, 100% {
+    opacity: 0.5;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.95;
+    color: #ffcc00;
+    text-shadow: 0 0 12px rgba(255, 204, 0, 0.4);
+    transform: scale(1.02);
+  }
 }
 
 @keyframes floatIcon {
@@ -1695,6 +1845,100 @@ const cells = computed(() => {
     0 0 16px rgba(0, 255, 136, 0.15);
   text-shadow: 0 0 6px #00ff88;
   background: rgba(0, 255, 136, 0.08);
+}
+
+/* 音量調整列樣式 */
+.settings-volume-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 4px 0 10px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.settings-volume-row:last-child {
+  border-bottom: none;
+}
+
+.volume-label {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.6);
+  font-family: sans-serif;
+  text-align: left;
+}
+
+/* 高質感科技感滑桿樣式 */
+.volume-slider {
+  -webkit-appearance: none;
+  width: 100%;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 9999px;
+  outline: none;
+  transition: background 0.3s ease;
+}
+
+/* 背景音樂滑桿 */
+.volume-slider.bgm-slider::-webkit-slider-runnable-track {
+  width: 100%;
+  height: 4px;
+  cursor: pointer;
+}
+
+.volume-slider.bgm-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  height: 12px;
+  width: 12px;
+  border-radius: 50%;
+  background: #00ffff;
+  cursor: pointer;
+  margin-top: -4px;
+  box-shadow: 0 0 6px rgba(0, 255, 255, 0.8);
+  transition: transform 0.15s ease, background-color 0.15s ease;
+}
+
+.volume-slider.bgm-slider::-webkit-slider-thumb:hover {
+  transform: scale(1.2);
+  background: #ffffff;
+  box-shadow: 0 0 10px rgba(0, 255, 255, 1);
+}
+
+/* 遊戲音效滑桿 */
+.volume-slider.sfx-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  height: 12px;
+  width: 12px;
+  border-radius: 50%;
+  background: #00ff88;
+  cursor: pointer;
+  margin-top: -4px;
+  box-shadow: 0 0 6px rgba(0, 255, 136, 0.8);
+  transition: transform 0.15s ease, background-color 0.15s ease;
+}
+
+.volume-slider.sfx-slider::-webkit-slider-thumb:hover {
+  transform: scale(1.2);
+  background: #ffffff;
+  box-shadow: 0 0 10px rgba(0, 255, 136, 1);
+}
+
+/* 啟動音效滑桿 */
+.volume-slider.start-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  height: 12px;
+  width: 12px;
+  border-radius: 50%;
+  background: #a855f7;
+  cursor: pointer;
+  margin-top: -4px;
+  box-shadow: 0 0 6px rgba(168, 85, 247, 0.8);
+  transition: transform 0.15s ease, background-color 0.15s ease;
+}
+
+.volume-slider.start-slider::-webkit-slider-thumb:hover {
+  transform: scale(1.2);
+  background: #ffffff;
+  box-shadow: 0 0 10px rgba(168, 85, 247, 1);
 }
 
 /* 下拉選單展開動畫 */
