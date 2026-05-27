@@ -125,12 +125,15 @@ watch(bgmVolume, (newVolume) => {
   }
 })
 
-// 設定選單顯示狀態，預設為關閉 (false)
+// ⚙️ 設定選單顯示狀態，預設為關閉 (false)
 const showSettings = ref(false)
 function toggleSettings() {
   showSettings.value = !showSettings.value
   unlockAudio() // 點擊設定按鈕時主動預載與解鎖音效，優雅升級 Autoplay 體驗
 }
+
+// 鍵盤即時敲擊亮燈回饋的響應式狀態追蹤
+const pressedKeys = ref<Record<string, boolean>>({})
 
 // --- 太陽能量商店系統響應式狀態 ---
 const sunCoins = ref(0) // 目前擁有的太陽能量點數 (每 50 分特效獲得 1 ☀️)
@@ -687,6 +690,10 @@ function restartGame() {
 }
 
 function handleInput(e: KeyboardEvent) {
+  // 記錄被按下的實體按鍵，實作操作說明面板鍵盤亮起互動
+  const rawKey = e.key.toLowerCase()
+  pressedKeys.value[rawKey] = true
+
   // 使用者按下鍵盤進行互動時，主動解鎖與預載音效
   unlockAudio()
 
@@ -736,12 +743,20 @@ function handleInput(e: KeyboardEvent) {
   }
 }
 
+// 實作按鍵釋放的事件處理，熄滅虛擬按鍵的霓虹燈
+function handleKeyUp(e: KeyboardEvent) {
+  const rawKey = e.key.toLowerCase()
+  pressedKeys.value[rawKey] = false
+}
+
 onMounted(() => {
   window.addEventListener('keydown', handleInput)
+  window.addEventListener('keyup', handleKeyUp)
 })
 
 onUnmounted(() => {
   window.removeEventListener('keydown', handleInput)
+  window.removeEventListener('keyup', handleKeyUp)
   if (gameInterval) {
     clearInterval(gameInterval)
   }
@@ -1002,12 +1017,12 @@ const cells = computed(() => {
             <!-- 方向鍵圖示 -->
             <div class="key-group">
               <div class="key-row">
-                <kbd class="key">W</kbd>
+                <kbd class="key" :class="{ pressed: pressedKeys['w'] || pressedKeys['arrowup'] }">W</kbd>
               </div>
               <div class="key-row">
-                <kbd class="key">A</kbd>
-                <kbd class="key">S</kbd>
-                <kbd class="key">D</kbd>
+                <kbd class="key" :class="{ pressed: pressedKeys['a'] || pressedKeys['arrowleft'] }">A</kbd>
+                <kbd class="key" :class="{ pressed: pressedKeys['s'] || pressedKeys['arrowdown'] }">S</kbd>
+                <kbd class="key" :class="{ pressed: pressedKeys['d'] || pressedKeys['arrowright'] }">D</kbd>
               </div>
               <p class="key-label" :class="{ blink: gameStatus === 'waiting' }">
                 {{ gameStatus === 'waiting' ? '▶ 按方向鍵開始' : '或方向鍵控制移動' }}
@@ -1017,7 +1032,7 @@ const cells = computed(() => {
             <!-- 暫停 / 繼續 -->
             <div class="key-group">
               <div class="key-row">
-                <kbd class="key wide">Space</kbd>
+                <kbd class="key wide" :class="{ pressed: pressedKeys[' '] }">Space</kbd>
               </div>
               <p class="key-label" :class="{ 'blink-paused': gameStatus === 'paused' }">
                 {{ gameStatus === 'paused' ? '⏸ 暫停中 (按空白鍵繼續)' : '遊戲暫停 / 繼續' }}
@@ -1273,6 +1288,48 @@ const cells = computed(() => {
   position: relative;
   overflow: hidden;
   font-family: 'Orbitron', sans-serif;
+  
+  /* 優化：改用極致奢華的藏青至暗紫深邃宇宙徑向漸層 */
+  background: radial-gradient(circle at 50% 50%, #0c1020 0%, #030611 100%);
+}
+
+/* 在背景深處注入兩團動態旋轉漂移的霓虹星雲，製造宏大的未來太空感 */
+.snake-game::before {
+  content: '';
+  position: absolute;
+  width: 600px;
+  height: 600px;
+  background: radial-gradient(circle, rgba(0, 255, 255, 0.05) 0%, transparent 70%);
+  top: -10%;
+  left: -10%;
+  z-index: 0;
+  pointer-events: none;
+  animation: auroraFlowOne 25s ease-in-out infinite alternate;
+}
+
+.snake-game::after {
+  content: '';
+  position: absolute;
+  width: 700px;
+  height: 700px;
+  background: radial-gradient(circle, rgba(168, 85, 247, 0.04) 0%, transparent 70%);
+  bottom: -15%;
+  right: -10%;
+  z-index: 0;
+  pointer-events: none;
+  animation: auroraFlowTwo 30s ease-in-out infinite alternate;
+}
+
+@keyframes auroraFlowOne {
+  0% { transform: translate(0, 0) scale(1) rotate(0deg); }
+  50% { transform: translate(80px, 50px) scale(1.1) rotate(180deg); }
+  100% { transform: translate(-40px, -60px) scale(0.9) rotate(360deg); }
+}
+
+@keyframes auroraFlowTwo {
+  0% { transform: translate(0, 0) scale(1) rotate(0deg); }
+  50% { transform: translate(-60px, -90px) scale(1.15) rotate(-180deg); }
+  100% { transform: translate(50px, 40px) scale(0.95) rotate(-360deg); }
 }
 
 /* ===== 百分慶祝太陽全螢幕特效 ===== */
@@ -1455,6 +1512,8 @@ const cells = computed(() => {
   display: flex;
   align-items: flex-start;
   gap: 28px;
+  position: relative;
+  z-index: 2; /* 確保遊戲主要視窗覆蓋在背景星雲之上 */
 }
 
 .header {
@@ -1469,29 +1528,59 @@ const cells = computed(() => {
   width: 220px;
   display: flex;
   flex-direction: column;
-  gap: 10px; /* 縮小區塊間距 */
+  gap: 12px; /* 稍微拉開區塊間距 */
   /* 與棋盤頂部對齊，稍微提升頂端位置 */
   padding-top: 40px;
 }
 
-/* 每個說明區塊 */
+/* 每個說明區塊：極致毛玻璃流光卡片 */
 .info-block {
-  background: rgba(0, 0, 0, 0.6);
-  border: 1px solid rgba(0, 255, 255, 0.15);
-  border-radius: 8px;
-  padding: 10px 12px; /* 緊湊化內邊距 */
+  background: rgba(10, 16, 32, 0.65);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-top: 1px solid rgba(0, 255, 255, 0.25); /* 頂部高光細線 */
+  border-radius: 12px;
+  padding: 12px 14px;
+  box-shadow:
+    0 10px 30px rgba(0, 0, 0, 0.4),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
-/* 說明標題 */
+.info-block:hover {
+  border-top-color: rgba(0, 255, 255, 0.5);
+  border-color: rgba(0, 255, 255, 0.15);
+  box-shadow:
+    0 15px 40px rgba(0, 0, 0, 0.5),
+    0 0 15px rgba(0, 255, 255, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  transform: translateY(-2px);
+}
+
+/* 說明標題：加上科技感霓虹切割線 */
 .info-title {
   color: #00ffff;
   font-size: 13px;
   font-weight: 700;
   letter-spacing: 1.5px;
-  margin: 0 0 8px 0;
+  margin: 0 0 10px 0;
   text-shadow: 0 0 8px rgba(0, 255, 255, 0.6);
-  border-bottom: 1px solid rgba(0, 255, 255, 0.15);
+  border-bottom: 1px solid rgba(0, 255, 255, 0.1);
   padding-bottom: 6px;
+  position: relative;
+}
+
+/* 青色科技定位飾條 */
+.info-title::after {
+  content: '';
+  position: absolute;
+  bottom: -1px;
+  left: 0;
+  width: 25px;
+  height: 2px;
+  background: #00ffff;
+  box-shadow: 0 0 6px #00ffff;
 }
 
 /* 遊戲說明清單 */
@@ -1525,29 +1614,43 @@ const cells = computed(() => {
   justify-content: center;
 }
 
-/* 鍵盤按鍵外觀 */
+/* 鍵盤按鍵外觀：3D 晶體亮麗質感 */
 .key {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 34px;
-  height: 34px;
-  background: linear-gradient(180deg, rgba(40, 60, 90, 0.9), rgba(15, 25, 45, 0.9));
-  border: 1px solid rgba(0, 200, 255, 0.35);
-  border-bottom: 3px solid rgba(0, 150, 200, 0.5);
-  border-radius: 5px;
-  color: #a0d8ef;
-  font-size: 12px;
+  width: 35px;
+  height: 35px;
+  background: linear-gradient(180deg, rgba(20, 30, 50, 0.85), rgba(8, 12, 24, 0.95));
+  border: 1px solid rgba(0, 255, 255, 0.2);
+  border-bottom: 3px solid rgba(0, 200, 255, 0.4);
+  border-radius: 6px;
+  color: rgba(160, 216, 239, 0.6);
+  font-size: 13px;
   font-family: 'Orbitron', sans-serif;
   font-weight: 700;
   letter-spacing: 0;
   box-shadow:
-    0 0 6px rgba(0, 200, 255, 0.15),
-    inset 0 1px 0 rgba(255, 255, 255, 0.1);
+    0 4px 10px rgba(0, 0, 0, 0.4),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  transition: all 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* 按鍵實體按下時的同步亮燈與下壓回饋 */
+.key.pressed {
+  color: #ffffff;
+  background: linear-gradient(180deg, rgba(0, 255, 255, 0.25), rgba(0, 150, 255, 0.15));
+  border-color: #00ffff;
+  border-bottom-width: 1px; /* 下壓感 */
+  transform: translateY(2px);
+  text-shadow: 0 0 8px #00ffff;
+  box-shadow:
+    0 0 15px rgba(0, 255, 255, 0.6),
+    inset 0 1px 0 rgba(255, 255, 255, 0.2);
 }
 
 .key.wide {
-  width: 80px;
+  width: 82px;
   font-size: 10px;
   letter-spacing: 1px;
 }
@@ -1954,18 +2057,57 @@ const cells = computed(() => {
 
 .score {
   color: #00ffff;
-  font-size: 28px;
+  font-size: 24px;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 3px;
   text-shadow:
-    0 0 10px #00ffff,
-    0 0 20px #00ffff,
-    0 0 40px #0088ff;
-  background: rgba(0, 0, 0, 0.7);
-  padding: 15px 25px;
-  border: 1px solid rgba(0, 255, 255, 0.5);
-  border-radius: 4px;
+    0 0 10px rgba(0, 255, 255, 0.8),
+    0 0 20px rgba(0, 255, 255, 0.4);
+  background: rgba(10, 16, 32, 0.8);
+  backdrop-filter: blur(12px);
+  padding: 12px 24px;
+  border: 1px solid rgba(0, 255, 255, 0.35);
+  border-radius: 8px;
+  position: relative;
+  overflow: hidden;
+  box-shadow:
+    0 10px 30px rgba(0, 0, 0, 0.5),
+    inset 0 0 15px rgba(0, 255, 255, 0.05);
+  transition: all 0.3s ease;
+}
+
+/* 加上儀表板定位小裝飾 */
+.score::before {
+  content: '■';
+  position: absolute;
+  top: 4px;
+  left: 8px;
+  font-size: 8px;
+  color: rgba(0, 255, 255, 0.5);
+}
+
+/* 科幻垂直循環掃描線 */
+.score::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 100%;
+  background: linear-gradient(
+    to bottom,
+    transparent 0%,
+    rgba(0, 255, 255, 0.04) 50%,
+    transparent 100%
+  );
+  pointer-events: none;
+  animation: scoreboardScan 3s linear infinite;
+}
+
+@keyframes scoreboardScan {
+  0% { transform: translateY(-100%); }
+  100% { transform: translateY(100%); }
 }
 
 .game-board {
@@ -2104,14 +2246,22 @@ const cells = computed(() => {
 }
 
 .snake {
-  background: linear-gradient(180deg, #c084fc 0%, #9333ea 40%, #7c3aed 60%, #4c1d95 100%);
-  border-radius: 4px;
+  /* 優化：色彩在身體裡順滑滾動的能量流動漸層 */
+  background: linear-gradient(270deg, #c084fc, #9333ea, #00ffff, #7c3aed);
+  background-size: 400% 400%;
+  animation: snakeEnergyFlow 4s ease infinite;
+  border-radius: 6px;
   box-shadow:
-    0 0 12px rgba(147, 51, 234, 0.8),
-    0 0 25px rgba(192, 132, 252, 0.4),
-    inset 0 2px 4px rgba(255, 255, 255, 0.3),
-    inset 0 -2px 4px rgba(76, 29, 149, 0.5);
+    0 0 10px rgba(147, 51, 234, 0.6),
+    0 0 20px rgba(0, 255, 255, 0.3),
+    inset 0 1px 3px rgba(255, 255, 255, 0.4);
   position: relative;
+}
+
+@keyframes snakeEnergyFlow {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
 }
 
 .snake::before {
@@ -2121,21 +2271,18 @@ const cells = computed(() => {
   left: 2px;
   right: 2px;
   height: 3px;
-  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.5), transparent);
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.6), transparent);
   border-radius: 2px;
 }
 
 .snake-head {
-  background:
-    radial-gradient(ellipse at 30% 30%, #e9d5ff, #a855f7 50%, #7c3aed),
-    linear-gradient(180deg, #c084fc, #9333ea);
-  border-radius: 6px;
+  background: radial-gradient(ellipse at 30% 30%, #ffffff 0%, #a855f7 55%, #6366f1 100%) !important;
+  border-radius: 8px;
   position: relative;
   box-shadow:
-    0 0 20px rgba(168, 85, 247, 0.9),
-    0 0 40px rgba(147, 51, 234, 0.5),
-    inset 0 2px 6px rgba(255, 255, 255, 0.4),
-    inset 0 -2px 6px rgba(76, 29, 149, 0.6);
+    0 0 15px rgba(168, 85, 247, 0.85),
+    0 0 30px rgba(0, 255, 255, 0.5),
+    inset 0 2px 4px rgba(255, 255, 255, 0.5);
 }
 
 .snake-head::before,
@@ -2148,8 +2295,8 @@ const cells = computed(() => {
   border-radius: 50%;
   top: 7px;
   box-shadow:
-    0 0 10px rgba(232, 121, 249, 1),
-    0 0 20px rgba(168, 85, 247, 0.8);
+    0 0 8px rgba(0, 255, 255, 0.9),
+    0 0 15px rgba(0, 255, 255, 0.6) !important;
 }
 
 .overlay {
@@ -2157,24 +2304,28 @@ const cells = computed(() => {
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
-  background: rgba(10, 15, 30, 0.9);
-  backdrop-filter: blur(6px);
+  background: rgba(10, 15, 30, 0.75);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
   padding: 30px;
-  width: 80%;
+  width: 85%;
   max-width: 320px;
-  border-radius: 12px;
+  border-radius: 16px;
   text-align: center;
   color: white;
-  border: 2px solid rgba(168, 85, 247, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-top: 1px solid rgba(168, 85, 247, 0.4); /* 紫色高光頂部 */
   z-index: 10;
   box-shadow:
-    0 0 35px rgba(0, 0, 0, 0.95),
-    0 0 15px rgba(168, 85, 247, 0.3);
+    0 20px 50px rgba(0, 0, 0, 0.8),
+    0 0 30px rgba(168, 85, 247, 0.15),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 16px;
+  gap: 20px;
+  transition: all 0.3s ease;
 }
 
 .overlay p {
