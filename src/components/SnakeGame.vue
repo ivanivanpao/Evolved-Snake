@@ -6,11 +6,35 @@ const GRID_SIZE = 20
 // 剛進入網頁時的警告遮罩開關，預設為開啟 (true)
 const showWarningOverlay = ref(true)
 
+// 玩家 ID 登錄與高分排行榜響應式狀態
+const playerId = ref('')
+const tempPlayerId = ref('')
+const showIdOverlay = ref(false)
+const showLeaderboardOverlay = ref(false)
+const leaderboard = ref<Array<{ name: string; score: number; date: string }>>([])
+
+function toggleLeaderboard() {
+  showLeaderboardOverlay.value = !showLeaderboardOverlay.value
+  unlockAudio() // 點擊時同步預載並解鎖音效，優雅升級 Autoplay 體驗
+}
+
+// 初始化讀取 LocalStorage 中的資料
+if (typeof window !== 'undefined') {
+  tempPlayerId.value = localStorage.getItem('snake_player_id') || ''
+  const savedLeaderboard = localStorage.getItem('snake_leaderboard')
+  if (savedLeaderboard) {
+    try {
+      leaderboard.value = JSON.parse(savedLeaderboard)
+    } catch (e) {
+      console.warn('讀取排行榜失敗:', e)
+    }
+  }
+}
+
 function closeWarningOverlay() {
   showWarningOverlay.value = false
   
   // 1. 同步在「同步互動調用棧」中直接初始化與解鎖 AudioContext
-  // 這可以 100% 保證 Web Audio API 不會因為非同步 Microtask 而被瀏覽器判定為無交互 Suspended！
   if (typeof window !== 'undefined') {
     const WebAudioContext = window.AudioContext || (window as any).webkitAudioContext
     if (WebAudioContext) {
@@ -27,12 +51,37 @@ function closeWarningOverlay() {
     }
   }
   
-  // 2. 直接以全域唯一的 sunAudio 播放 start.mp3，在點擊事件中直接達成 100% 播放與解鎖！
+  // 2. 顯示輸入玩家 ID 的 Overlay 遮罩
+  showIdOverlay.value = true
+  
+  // 3. 同步初始化 Audio 實例，為點擊登錄時的正式播放做足預載準備
+  initAudioElements()
+}
+
+// 確認登錄玩家 ID 邏輯
+function submitPlayerId() {
+  let finalId = tempPlayerId.value.trim()
+  if (!finalId) {
+    // 智慧自動生成酷炫電馭叛客 ID
+    const randomSuffix = Math.floor(Math.random() * 90) + 10 // 10 到 99 隨機後綴
+    finalId = `CyberRunner-${randomSuffix}`
+  }
+  
+  playerId.value = finalId
+  tempPlayerId.value = finalId
+  
+  if (typeof window !== 'undefined') {
+    localStorage.setItem('snake_player_id', finalId)
+  }
+  
+  // 關閉 ID 輸入彈窗
+  showIdOverlay.value = false
+  
+  // 4. 使用者在「確認登錄」的同步點擊 Callstack 中，直接完成 100% 播放 start.mp3 與音訊解鎖！
   isAudioUnlocked.value = true
   playStartSound()
-
-  // 3. 同步初始化並播放背景音樂 back.mp3，在點擊事件的同步一線 Callstack 中直接繞過 Autoplay 限制！
-  initAudioElements()
+  
+  // 5. 同步播放背景音樂 back.mp3
   if (backAudio && bgmEnabled.value) {
     backAudio.play().catch((e) => {
       console.warn('背景音樂播放被瀏覽器阻擋，將於使用者操作後重試:', e)
@@ -652,12 +701,47 @@ function moveSnake() {
   }
 }
 
+// 儲存玩家得分至本地高分榜
+function saveScoreToLeaderboard() {
+  const currentName = playerId.value.trim() || '無名戰神'
+  const currentScore = score.value
+  
+  if (typeof window === 'undefined') return
+  
+  const saved = localStorage.getItem('snake_leaderboard')
+  let boardList = []
+  if (saved) {
+    try {
+      boardList = JSON.parse(saved)
+    } catch (e) {
+      console.warn('讀取歷史高分榜失敗:', e)
+    }
+  }
+  
+  // 新增本次佳績
+  boardList.push({
+    name: currentName,
+    score: currentScore,
+    date: new Date().toLocaleDateString('zh-TW', { month: '2-digit', day: '2-digit' })
+  })
+  
+  // 降序排序
+  boardList.sort((a: any, b: any) => b.score - a.score)
+  
+  // 只精確保留前 5 名最頂級的成就
+  const trimmed = boardList.slice(0, 5)
+  localStorage.setItem('snake_leaderboard', JSON.stringify(trimmed))
+  leaderboard.value = trimmed
+}
+
 function gameOver() {
   gameStatus.value = 'gameover'
   if (gameInterval) {
     clearInterval(gameInterval)
     gameInterval = null
   }
+  // 保存當前得分至本地高分排行榜！
+  saveScoreToLeaderboard()
 }
 
 function startGame() {
@@ -806,6 +890,76 @@ const cells = computed(() => {
         </div>
       </div>
     </Transition>
+
+    <!-- ⚔️ 登錄太陽神殿玩家 ID 輸入遮罩 -->
+    <Transition name="fade">
+      <div v-if="showIdOverlay" class="warning-overlay id-input-overlay">
+        <div class="warning-content id-content">
+          <div class="sunglasses-icon">⚔️</div>
+          <p class="warning-text">登錄太陽神殿</p>
+          <p class="volume-warning-text">請輸入您的玩家 ID 以登載歷史功勳紀錄</p>
+          <div class="id-input-wrapper">
+            <input
+              type="text"
+              v-model="tempPlayerId"
+              placeholder="輸入您的玩家 ID..."
+              class="id-input-field"
+              @keydown.enter="submitPlayerId"
+              maxlength="12"
+            />
+            <!-- 未來科技感的四角定位裝飾線 -->
+            <span class="tech-corner top-left"></span>
+            <span class="tech-corner top-right"></span>
+            <span class="tech-corner bottom-left"></span>
+            <span class="tech-corner bottom-right"></span>
+          </div>
+          <button class="warning-btn submit-id-btn" @click="submitPlayerId">
+            確認登錄 ⚔️
+          </button>
+        </div>
+      </div>
+    </Transition>
+
+    <!-- 🏆 太陽神殿高分榜全螢幕彈窗遮罩 -->
+    <Transition name="fade">
+      <div v-if="showLeaderboardOverlay" class="warning-overlay leaderboard-overlay" @click.self="showLeaderboardOverlay = false">
+        <div class="warning-content leaderboard-dialog">
+          <div class="sunglasses-icon rank-crown">🏆</div>
+          <p class="warning-text">太陽神殿高分榜</p>
+          <p class="volume-warning-text">記載前五名至高戰功的英雄殿堂</p>
+          
+          <table class="score-table popup-table">
+            <thead>
+              <tr>
+                <th class="th-rank">排名</th>
+                <th class="th-player">玩家 ID</th>
+                <th class="th-score">最高分</th>
+                <th class="th-date">登錄日期</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="(entry, index) in leaderboard" :key="index" :class="'rank-' + (index + 1)">
+                <td class="rank-num">
+                  <span class="rank-badge">{{ index + 1 }}</span>
+                </td>
+                <td class="player-name">{{ entry.name }}</td>
+                <td class="score-val">{{ entry.score }}</td>
+                <td class="score-date">{{ entry.date || '--/--' }}</td>
+              </tr>
+              <tr v-if="leaderboard.length === 0">
+                <td colspan="4" class="no-records">
+                  <span class="no-records-text">暫無神殿登錄紀錄 🌌</span>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+          
+          <button class="warning-btn close-leaderboard-btn" @click="showLeaderboardOverlay = false">
+            離開殿堂 ⚔️
+          </button>
+        </div>
+      </div>
+    </Transition>
     <!-- 主要佈局：棋盤 + 右側說明面板 -->
     <div class="game-layout">
       <!-- 左側：工具列 + 棋盤 -->
@@ -817,6 +971,15 @@ const cells = computed(() => {
             ☀️ 太陽能量: <span class="sun-coin-count">{{ sunCoins }}</span>
           </div>
           
+          <button
+            class="settings-btn leaderboard-btn"
+            :class="{ active: showLeaderboardOverlay }"
+            @click="toggleLeaderboard"
+            title="神殿高分榜"
+          >
+            <span class="settings-btn-icon">🏆</span>高分榜
+          </button>
+
           <div class="settings-container">
             <button
               class="settings-btn"
@@ -992,7 +1155,10 @@ const cells = computed(() => {
           <div v-if="gameStatus === 'gameover'" class="overlay">
             <p class="overlay-title">遊戲結束</p>
             <p class="overlay-sub">最終分數: {{ score }}</p>
-            <button @click="restartGame">重新開始</button>
+            <div class="gameover-actions">
+              <button @click="restartGame" class="gameover-btn">重新開始</button>
+              <button @click="toggleLeaderboard" class="gameover-btn secondary-btn">查看高分榜 🏆</button>
+            </div>
           </div>
         </div>
       </div>
@@ -1097,6 +1263,7 @@ const cells = computed(() => {
             </div>
           </div>
         </div>
+
       </aside>
     </div>
 
@@ -2649,5 +2816,428 @@ const cells = computed(() => {
   100% {
     filter: brightness(1.2) drop-shadow(0 0 8px rgba(255, 255, 255, 0.9));
   }
+}
+
+/* ===== 玩家 ID 輸入彈窗樣式 ===== */
+.id-input-overlay {
+  background: rgba(5, 7, 15, 0.95) !important;
+  backdrop-filter: blur(20px) !important;
+  -webkit-backdrop-filter: blur(20px) !important;
+}
+
+.id-content {
+  gap: 16px !important;
+}
+
+.id-input-wrapper {
+  position: relative;
+  width: min(85vw, 280px);
+  margin: 10px 0 15px 0;
+}
+
+.id-input-field {
+  width: 100%;
+  padding: 12px 16px;
+  background: rgba(10, 16, 32, 0.7);
+  border: 1px solid rgba(0, 255, 255, 0.25);
+  border-radius: 8px;
+  color: #ffffff;
+  font-family: 'Orbitron', sans-serif;
+  font-size: 16px;
+  font-weight: 700;
+  text-align: center;
+  outline: none;
+  letter-spacing: 1px;
+  box-shadow:
+    0 10px 25px rgba(0, 0, 0, 0.5),
+    inset 0 0 10px rgba(0, 255, 255, 0.03);
+  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.id-input-field:focus {
+  border-color: #00ffff;
+  box-shadow:
+    0 0 20px rgba(0, 255, 255, 0.4),
+    0 0 40px rgba(0, 255, 255, 0.1),
+    inset 0 0 10px rgba(0, 255, 255, 0.1);
+}
+
+.id-input-field::placeholder {
+  color: rgba(255, 255, 255, 0.25);
+  font-weight: normal;
+  font-size: 14px;
+}
+
+/* 未來科技感的四角定位折角裝飾 */
+.tech-corner {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  border: 2px solid rgba(0, 255, 255, 0.4);
+  pointer-events: none;
+  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.tech-corner.top-left {
+  top: -2px;
+  left: -2px;
+  border-right: none;
+  border-bottom: none;
+}
+
+.tech-corner.top-right {
+  top: -2px;
+  right: -2px;
+  border-left: none;
+  border-bottom: none;
+}
+
+.tech-corner.bottom-left {
+  bottom: -2px;
+  left: -2px;
+  border-right: none;
+  border-top: none;
+}
+
+.tech-corner.bottom-right {
+  bottom: -2px;
+  right: -2px;
+  border-left: none;
+  border-top: none;
+}
+
+.id-input-field:focus ~ .tech-corner {
+  border-color: #00ffff;
+  filter: drop-shadow(0 0 5px #00ffff);
+}
+
+.id-input-field:focus ~ .tech-corner.top-left { transform: translate(-2px, -2px); }
+.id-input-field:focus ~ .tech-corner.top-right { transform: translate(2px, -2px); }
+.id-input-field:focus ~ .tech-corner.bottom-left { transform: translate(-2px, 2px); }
+.id-input-field:focus ~ .tech-corner.bottom-right { transform: translate(2px, 2px); }
+
+.submit-id-btn {
+  color: #c084fc !important;
+  border-color: rgba(168, 85, 247, 0.4) !important;
+  box-shadow:
+    0 0 15px rgba(168, 85, 247, 0.2),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1) !important;
+}
+
+.submit-id-btn:hover {
+  border-color: #c084fc !important;
+  color: #ffffff !important;
+  box-shadow:
+    0 0 25px rgba(168, 85, 247, 0.65),
+    0 0 50px rgba(168, 85, 247, 0.2) !important;
+}
+
+/* ===== 🏆 高分排行榜卡片與表格樣式 ===== */
+.leaderboard-block {
+  margin-top: 6px; /* 與上方技能神殿緊湊對齊 */
+}
+
+.leaderboard-block .score-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 8px;
+  font-size: 11px;
+}
+
+.leaderboard-block .score-table th {
+  color: rgba(255, 255, 255, 0.35);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  padding: 6px 4px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.th-rank { width: 22%; text-align: center !important; }
+.th-player { width: 50%; text-align: left !important; }
+.th-score { width: 28%; text-align: right !important; }
+
+.leaderboard-block .score-table tr {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  transition: background-color 0.2s ease;
+}
+
+.leaderboard-block .score-table tr:last-child {
+  border-bottom: none;
+}
+
+.leaderboard-block .score-table tr:hover {
+  background-color: rgba(255, 255, 255, 0.02);
+}
+
+.leaderboard-block .score-table td {
+  padding: 6px 4px;
+  vertical-align: middle;
+}
+
+.rank-num {
+  text-align: center;
+}
+
+.rank-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  font-weight: 900;
+  font-family: 'Orbitron', sans-serif;
+  background: rgba(255, 255, 255, 0.05);
+  color: rgba(255, 255, 255, 0.4);
+  font-size: 9px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.player-name {
+  color: rgba(255, 255, 255, 0.75);
+  font-weight: 700;
+  font-family: sans-serif;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 90px;
+  text-align: left;
+}
+
+.leaderboard-block .score-val {
+  text-align: right;
+  color: #00ffff;
+  font-weight: 700;
+  font-family: 'Orbitron', sans-serif;
+  font-size: 11px;
+  text-shadow: 0 0 6px rgba(0, 255, 255, 0.3);
+}
+
+.no-records {
+  text-align: center;
+  padding: 20px 0 !important;
+}
+
+.no-records-text {
+  color: rgba(255, 255, 255, 0.3);
+  font-family: sans-serif;
+  font-size: 11px;
+  letter-spacing: 1px;
+}
+
+/* --- 尊貴名次金銀銅三色霓虹發光樣式 --- */
+/* 第 1 名：金黃色 (Gold Glory) */
+.rank-1 .rank-badge {
+  background: rgba(255, 204, 0, 0.12) !important;
+  color: #ffcc00 !important;
+  border: 1px solid rgba(255, 204, 0, 0.4);
+  box-shadow: 0 0 6px rgba(255, 204, 0, 0.25);
+}
+.rank-1 .player-name {
+  color: #ffd700 !important;
+  text-shadow: 0 0 4px rgba(255, 215, 0, 0.3);
+}
+.rank-1 .score-val {
+  color: #ffd700 !important;
+  text-shadow: 0 0 8px rgba(255, 215, 0, 0.6) !important;
+}
+
+/* 第 2 名：銀白色 (Silver Glory) */
+.rank-2 .rank-badge {
+  background: rgba(243, 244, 246, 0.08) !important;
+  color: #e5e7eb !important;
+  border: 1px solid rgba(243, 244, 246, 0.3);
+  box-shadow: 0 0 6px rgba(243, 244, 246, 0.2);
+}
+.rank-2 .player-name {
+  color: #f3f4f6 !important;
+}
+.rank-2 .score-val {
+  color: #f3f4f6 !important;
+  text-shadow: 0 0 8px rgba(255, 255, 255, 0.5) !important;
+}
+
+/* 第 3 名：青銅橘色 (Bronze Glory) */
+.rank-3 .rank-badge {
+  background: rgba(217, 119, 6, 0.12) !important;
+  color: #f59e0b !important;
+  border: 1px solid rgba(217, 119, 6, 0.3);
+  box-shadow: 0 0 6px rgba(217, 119, 6, 0.2);
+}
+.rank-3 .player-name {
+  color: #fbbf24 !important;
+}
+.rank-3 .score-val {
+  color: #fbbf24 !important;
+  text-shadow: 0 0 8px rgba(251, 191, 36, 0.5) !important;
+}
+
+/* ===== 🏆 頂部黃金高分榜按鈕與 GameOver 雙按鈕樣式 ===== */
+.leaderboard-btn {
+  border-color: rgba(255, 204, 0, 0.4) !important;
+  color: rgba(255, 255, 255, 0.8) !important;
+  box-shadow: 0 0 10px rgba(255, 204, 0, 0.05) !important;
+  margin-right: 8px; /* 拉開與設定按鈕間距 */
+}
+
+.leaderboard-btn:hover {
+  color: #ffcc00 !important;
+  border-color: rgba(255, 204, 0, 0.7) !important;
+  box-shadow:
+    0 0 15px rgba(255, 204, 0, 0.25),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1) !important;
+  transform: translateY(-1px);
+}
+
+.leaderboard-btn.active {
+  color: #ffcc00 !important;
+  border-color: rgba(255, 204, 0, 0.9) !important;
+  background: rgba(45, 35, 10, 0.85) !important;
+  box-shadow:
+    0 0 12px rgba(255, 204, 0, 0.5),
+    0 0 25px rgba(255, 204, 0, 0.2) !important;
+  text-shadow: 0 0 8px rgba(255, 204, 0, 0.6) !important;
+}
+
+/* GameOver 雙按鈕排版 */
+.gameover-actions {
+  display: flex;
+  gap: 12px;
+  margin-top: 12px;
+  justify-content: center;
+}
+
+.gameover-btn {
+  background: linear-gradient(135deg, #9333ea, #7c3aed) !important;
+  color: white;
+  border: none;
+  padding: 10px 20px !important;
+  font-size: 15px !important;
+  border-radius: 6px;
+  cursor: pointer;
+  font-family: 'Orbitron', sans-serif;
+  box-shadow: 0 0 15px rgba(147, 51, 234, 0.4) !important;
+  transition: all 0.25s ease !important;
+}
+
+.gameover-btn:hover {
+  box-shadow: 0 0 25px rgba(147, 51, 234, 0.7) !important;
+  transform: scale(1.04);
+}
+
+.gameover-btn.secondary-btn {
+  background: linear-gradient(180deg, rgba(30, 25, 15, 0.85), rgba(15, 12, 8, 0.95)) !important;
+  border: 1px solid rgba(255, 204, 0, 0.45) !important;
+  border-bottom: 2px solid rgba(255, 170, 0, 0.6) !important;
+  color: #ffeb3b !important;
+  box-shadow: 0 0 8px rgba(255, 170, 0, 0.15) !important;
+}
+
+.gameover-btn.secondary-btn:hover {
+  background: linear-gradient(180deg, rgba(50, 40, 20, 1), rgba(25, 20, 10, 1)) !important;
+  border-color: #ffeb3b !important;
+  box-shadow:
+    0 0 20px rgba(255, 204, 0, 0.4),
+    0 0 5px rgba(255, 255, 255, 0.1) !important;
+}
+
+/* ===== 🏛️ 全螢幕高透光黃金高分榜彈窗樣式 ===== */
+.leaderboard-overlay {
+  background: rgba(3, 4, 10, 0.93) !important;
+  backdrop-filter: blur(20px) !important;
+  -webkit-backdrop-filter: blur(20px) !important;
+}
+
+.leaderboard-dialog {
+  width: min(90vw, 420px) !important; /* 排行榜視窗稍微加寬以容納日期 */
+  background: rgba(10, 12, 24, 0.75) !important;
+  border: 1px solid rgba(255, 255, 255, 0.08) !important;
+  border-top: 2px solid rgba(255, 204, 0, 0.45) !important;
+  border-radius: 16px !important;
+  padding: 35px 25px !important;
+  box-shadow:
+    0 25px 60px rgba(0, 0, 0, 0.9),
+    0 0 35px rgba(255, 204, 0, 0.1),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05) !important;
+}
+
+.rank-crown {
+  font-size: 64px !important;
+  filter: drop-shadow(0 0 15px rgba(255, 204, 0, 0.5)) !important;
+  margin-bottom: -5px;
+}
+
+/* 彈窗表格樣式 */
+.popup-table {
+  width: 100% !important;
+  border-collapse: collapse !important;
+  margin: 15px 0 25px 0 !important;
+  font-size: 13px !important;
+}
+
+.popup-table th {
+  color: rgba(255, 255, 255, 0.35) !important;
+  font-size: 11px !important;
+  padding: 8px 6px !important;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1) !important;
+}
+
+.popup-table .th-rank { width: 18% !important; text-align: center !important; }
+.popup-table .th-player { width: 44% !important; text-align: left !important; }
+.popup-table .th-score { width: 20% !important; text-align: right !important; }
+.popup-table .th-date { width: 18% !important; text-align: right !important; }
+
+.popup-table tr {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05) !important;
+}
+
+.popup-table tr:hover {
+  background-color: rgba(255, 255, 255, 0.03) !important;
+}
+
+.popup-table td {
+  padding: 10px 6px !important; /* 加高內距更為舒適 */
+}
+
+.popup-table .rank-badge {
+  width: 22px !important;
+  height: 22px !important;
+  font-size: 10px !important;
+}
+
+.popup-table .player-name {
+  font-size: 13px !important;
+  max-width: 140px !important;
+}
+
+.popup-table .score-val {
+  font-size: 13px !important;
+  text-shadow: 0 0 8px rgba(0, 255, 255, 0.4) !important;
+}
+
+.score-date {
+  text-align: right;
+  color: rgba(255, 255, 255, 0.45);
+  font-family: 'Orbitron', sans-serif;
+  font-size: 11px;
+}
+
+.close-leaderboard-btn {
+  color: #ffcc00 !important;
+  border-color: rgba(255, 204, 0, 0.4) !important;
+  box-shadow:
+    0 0 15px rgba(255, 204, 0, 0.2),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1) !important;
+  font-size: 16px !important;
+  padding: 12px 36px !important;
+}
+
+.close-leaderboard-btn:hover {
+  border-color: #ffcc00 !important;
+  color: #ffffff !important;
+  box-shadow:
+    0 0 25px rgba(255, 204, 0, 0.65),
+    0 0 50px rgba(255, 204, 0, 0.2) !important;
 }
 </style>
