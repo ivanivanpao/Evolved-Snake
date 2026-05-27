@@ -8,7 +8,28 @@ const showWarningOverlay = ref(true)
 
 function closeWarningOverlay() {
   showWarningOverlay.value = false
-  unlockAudio() // 藉由這次極具儀式感的點擊，順暢預載與啟用自訂音效！
+  
+  // 1. 同步在「同步互動調用棧」中直接初始化與解鎖 AudioContext
+  // 這可以 100% 保證 Web Audio API 不會因為非同步 Microtask 而被瀏覽器判定為無交互 Suspended！
+  if (typeof window !== 'undefined') {
+    const WebAudioContext = window.AudioContext || (window as any).webkitAudioContext
+    if (WebAudioContext) {
+      if (!audioCtx) {
+        try {
+          audioCtx = new WebAudioContext()
+        } catch (e) {
+          console.warn('AudioContext 初始化失敗:', e)
+        }
+      }
+      if (audioCtx && audioCtx.state === 'suspended') {
+        audioCtx.resume().catch(() => {})
+      }
+    }
+  }
+  
+  // 2. 直接以全域唯一的 sunAudio 播放 start.mp3，在點擊事件中直接達成 100% 播放與解鎖！
+  isAudioUnlocked.value = true
+  playStartSound()
 }
 
 const snake = ref([
@@ -149,6 +170,23 @@ function playRandomSunSound() {
     }
   } catch (e) {
     console.warn('音效播放失敗:', e)
+  }
+}
+
+// 播放進入遊戲與繼續遊戲時的 start.mp3 音效
+function playStartSound() {
+  if (soundMuted.value) return
+  try {
+    initAudioElements()
+    if (sunAudio) {
+      sunAudio.src = '/start.mp3'
+      sunAudio.currentTime = 0 // 重設播放進度以利連續或快速重啟時能重新播放
+      sunAudio.play().catch((e) => {
+        console.warn('播放 start.mp3 被瀏覽器阻擋，將於使用者點擊或操作後解鎖:', e)
+      })
+    }
+  } catch (e) {
+    console.warn('播放 start.mp3 失敗:', e)
   }
 }
 
@@ -574,12 +612,14 @@ function startGame() {
   initGame()
   gameStatus.value = 'playing'
   gameInterval = setInterval(moveSnake, speed.value) as unknown as number
+  playStartSound() // 進入遊戲時播放 start.mp3 音效！
 }
 
 function resumeGame() {
   if (gameStatus.value === 'paused') {
     gameStatus.value = 'playing'
     gameInterval = setInterval(moveSnake, speed.value) as unknown as number
+    playStartSound() // 繼續遊戲時播放 start.mp3 音效！
   }
 }
 
