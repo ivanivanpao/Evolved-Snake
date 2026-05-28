@@ -663,6 +663,11 @@ function moveSnake() {
   if (newHead.x === food.value.x && newHead.y === food.value.y) {
     score.value += 10
     playEatSound() // 播放吃到食物的清脆電子音效！
+    
+    // 吃到太陽或棉花食物時，有 30% 的機率額外獲得 1 點太陽能量 ☀️
+    if (Math.random() < 0.3) {
+      sunCoins.value++
+    }
     let isSpecial = false
     let isOnlyBlack = false
     let isWhite = false
