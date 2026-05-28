@@ -71,6 +71,12 @@ const shieldTimeLeft = ref(0)
 let shieldTimer: number | null = null
 let shieldCountdownInterval: number | null = null
 
+// ===== 太陽神速狀態 =====
+const speedBoostActive = ref(false)
+const speedBoostTimeLeft = ref(0)
+let speedBoostTimer: number | null = null
+let speedBoostCountdownInterval: number | null = null
+
 // ===== 設定選單 =====
 const showGrid = ref(true)
 const showSettings = ref(false)
@@ -393,12 +399,37 @@ function useSunSpeedSkill() {
   if (sunCoins.value < 1) return
   sunCoins.value -= 1
   playSpeedSound()
-  // 立刻加速當前移動速度的兩倍（即將移動間隔時間除以二，最低限制 50ms）
-  speed.value = Math.max(50, Math.floor(speed.value / 2))
+  
+  speedBoostActive.value = true
+  speedBoostTimeLeft.value = 5
+  // 加速當前速度兩倍：將移動間隔設定為原速的一半 (100ms)
+  speed.value = Math.max(50, Math.floor(baseSpeed / 2))
+  
+  if (speedBoostTimer) clearTimeout(speedBoostTimer)
+  if (speedBoostCountdownInterval) clearInterval(speedBoostCountdownInterval)
+  
   if (gameStatus.value === 'playing' && gameInterval) {
     clearInterval(gameInterval)
     gameInterval = setInterval(gameLoop, speed.value) as unknown as number
   }
+  
+  speedBoostCountdownInterval = setInterval(() => {
+    if (speedBoostTimeLeft.value > 1) speedBoostTimeLeft.value -= 1
+    else {
+      speedBoostTimeLeft.value = 0
+      if (speedBoostCountdownInterval) { clearInterval(speedBoostCountdownInterval); speedBoostCountdownInterval = null }
+    }
+  }, 1000) as unknown as number
+  
+  speedBoostTimer = setTimeout(() => {
+    speed.value = baseSpeed
+    speedBoostActive.value = false
+    speedBoostTimer = null
+    if (gameStatus.value === 'playing' && gameInterval) {
+      clearInterval(gameInterval)
+      gameInterval = setInterval(gameLoop, speed.value) as unknown as number
+    }
+  }, 5000) as unknown as number
 }
 
 function useSlowDownSkill() {
@@ -454,8 +485,12 @@ function initBossGame() {
   sunCoins.value = 0
   shieldActive.value = false
   shieldTimeLeft.value = 0
+  speedBoostActive.value = false
+  speedBoostTimeLeft.value = 0
   if (shieldTimer) { clearTimeout(shieldTimer); shieldTimer = null }
   if (shieldCountdownInterval) { clearInterval(shieldCountdownInterval); shieldCountdownInterval = null }
+  if (speedBoostTimer) { clearTimeout(speedBoostTimer); speedBoostTimer = null }
+  if (speedBoostCountdownInterval) { clearInterval(speedBoostCountdownInterval); speedBoostCountdownInterval = null }
   generateBossFood()
 }
 
@@ -640,10 +675,10 @@ function startBossTimers() {
   bossTimerInterval = setInterval(() => {
     // 通關用時始終累加（含 GCD 答題期間，鼓勵快速心算）
     bossElapsedTime.value++
-    // 生存計時僅在非 GCD Overlay 時累加（每 15 秒觸發大招）
+    // 生存計時僅在非 GCD Overlay 時累加（每 20 秒觸發大招）
     if (!showGcdOverlay.value) {
       bossAliveTime.value++
-      if (bossAliveTime.value % 15 === 0) {
+      if (bossAliveTime.value % 20 === 0) {
         triggerGcdChallenge()
       }
     }
@@ -669,13 +704,37 @@ function saveBossTimeToLeaderboard() {
   if (saved) { try { boardList = JSON.parse(saved) } catch (e) { /* 忽略 */ } }
   // 順手清理任何可能殘留的未通關 00:00 異常紀錄
   boardList = boardList.filter(r => r.time > 0)
-  boardList.push({
-    name: currentName,
-    time: bossElapsedTime.value,
-    date: new Date().toLocaleDateString('zh-TW', { month: '2-digit', day: '2-digit' })
-  })
-  boardList.sort((a: any, b: any) => a.time - b.time) // 升序排列（最快的在前）
-  const trimmed = boardList.slice(0, 5)
+  
+  // 同一個 ID 直接覆蓋為個人最佳紀錄 (取通關時間最短者)
+  const existingIndex = boardList.findIndex(r => r.name === currentName)
+  if (existingIndex !== -1) {
+    if (bossElapsedTime.value < boardList[existingIndex].time) {
+      boardList[existingIndex].time = bossElapsedTime.value
+      boardList[existingIndex].date = new Date().toLocaleDateString('zh-TW', { month: '2-digit', day: '2-digit' })
+    }
+  } else {
+    boardList.push({
+      name: currentName,
+      time: bossElapsedTime.value,
+      date: new Date().toLocaleDateString('zh-TW', { month: '2-digit', day: '2-digit' })
+    })
+  }
+
+  // 再次進行全域去重防禦（以防萬一）
+  const uniqueRecords: any[] = []
+  for (const r of boardList) {
+    const idx = uniqueRecords.findIndex(u => u.name === r.name)
+    if (idx !== -1) {
+      if (r.time < uniqueRecords[idx].time) {
+        uniqueRecords[idx] = r
+      }
+    } else {
+      uniqueRecords.push(r)
+    }
+  }
+  
+  uniqueRecords.sort((a: any, b: any) => a.time - b.time) // 升序排列（最快的在前）
+  const trimmed = uniqueRecords.slice(0, 5)
   localStorage.setItem('snake_boss_leaderboard', JSON.stringify(trimmed))
   bossLeaderboard.value = trimmed
 }
@@ -693,6 +752,10 @@ function clearAllTimers() {
   if (bossProjectileMoveInterval) { clearInterval(bossProjectileMoveInterval); bossProjectileMoveInterval = null }
   if (shieldTimer) { clearTimeout(shieldTimer); shieldTimer = null }
   if (shieldCountdownInterval) { clearInterval(shieldCountdownInterval); shieldCountdownInterval = null }
+  if (speedBoostTimer) { clearTimeout(speedBoostTimer); speedBoostTimer = null }
+  if (speedBoostCountdownInterval) { clearInterval(speedBoostCountdownInterval); speedBoostCountdownInterval = null }
+  speedBoostActive.value = false
+  speedBoostTimeLeft.value = 0
 }
 
 // ===== 開始 / 暫停 / 繼續 / 重新開始 =====
@@ -801,17 +864,30 @@ watch(bgmVolume, (v) => { if (backAudio) backAudio.volume = v })
 onMounted(() => {
   window.addEventListener('keydown', handleInput)
   window.addEventListener('keyup', handleKeyUp)
-  // 從 localStorage 讀取 Boss 速度排行榜
+  // 從 localStorage 讀取 Boss 速度排行榜並進行重名清洗與去重
   if (typeof window !== 'undefined') {
     const savedBossBoard = localStorage.getItem('snake_boss_leaderboard')
     if (savedBossBoard) {
       try { 
         const parsed = JSON.parse(savedBossBoard)
-        // 自動濾除 00:00 異常資料並寫回 localStorage
-        bossLeaderboard.value = parsed.filter((r: any) => r.time > 0)
-        if (bossLeaderboard.value.length !== parsed.length) {
-          localStorage.setItem('snake_boss_leaderboard', JSON.stringify(bossLeaderboard.value))
+        const validRecords = parsed.filter((r: any) => r.time > 0)
+        
+        // 歷史重名資料清洗：每個 ID 只保留個人最佳（時間最短）的紀錄
+        const uniqueRecords: any[] = []
+        for (const r of validRecords) {
+          const idx = uniqueRecords.findIndex(u => u.name === r.name)
+          if (idx !== -1) {
+            if (r.time < uniqueRecords[idx].time) {
+              uniqueRecords[idx] = r
+            }
+          } else {
+            uniqueRecords.push(r)
+          }
         }
+        
+        uniqueRecords.sort((a: any, b: any) => a.time - b.time)
+        bossLeaderboard.value = uniqueRecords.slice(0, 5)
+        localStorage.setItem('snake_boss_leaderboard', JSON.stringify(bossLeaderboard.value))
       } catch (e) { /* 忽略 */ }
     }
   }
@@ -1060,6 +1136,16 @@ function formatLeaderboardTime(seconds: number): string {
             <div v-if="shieldActive" class="shield-status-overlay">🛡️ 日冕護盾中: {{ shieldTimeLeft }}秒</div>
           </Transition>
 
+          <!-- 加速剩餘時間提示 -->
+          <Transition name="fade">
+            <div v-if="speedBoostActive" class="shield-status-overlay speed-status-overlay">⚡ 太陽神速中: {{ speedBoostTimeLeft }}秒</div>
+          </Transition>
+
+          <!-- 砲彈緩速提示 -->
+          <Transition name="fade">
+            <div v-if="projectileSpeed > 400" class="shield-status-overlay slow-status-overlay">⏳ 烈日緩速中 (砲彈間隔: {{ projectileSpeed }}ms)</div>
+          </Transition>
+
           <!-- 遊戲狀態 Overlay -->
           <div v-if="gameStatus === 'waiting'" class="overlay">
             <p class="overlay-title">⚔️ Boss 戰模式</p>
@@ -1112,7 +1198,7 @@ function formatLeaderboardTime(seconds: number): string {
             <li>閃避赤紅砲彈，被擊中扣 1 節 🔥</li>
             <li>碰到 Boss 太陽扣 1 節 ☀️</li>
             <li>吃棉花補血 +1 節 ☁️</li>
-            <li>每 15 秒觸發 GCD 數學大招 🧮</li>
+            <li>每 20 秒觸發 GCD 數學大招 🧮</li>
             <li>答對 5 次即可擊敗 Boss 🏆</li>
             <li>蛇身 ≤ 2 節則遊戲結束 💀</li>
           </ul>
@@ -1147,7 +1233,7 @@ function formatLeaderboardTime(seconds: number): string {
           <h2 class="info-title">⛩️ 太陽神殿</h2>
           <div class="temple-shop">
             <div class="shop-item" :class="{ affordable: sunCoins >= 1 }">
-              <div class="shop-item-info"><span class="shop-item-title">⚡ 太陽神速</span><span class="shop-item-desc">速度立刻加倍</span></div>
+              <div class="shop-item-info"><span class="shop-item-title">⚡ 太陽神速</span><span class="shop-item-desc">速度加倍維持5秒</span></div>
               <button class="shop-buy-btn" :disabled="sunCoins < 1 || gameStatus !== 'playing'" @click="useSunSpeedSkill">
                 <span class="cost">1 ☀️</span><kbd class="shop-kbd">Shift</kbd>
               </button>
@@ -1471,7 +1557,7 @@ function formatLeaderboardTime(seconds: number): string {
 }
 
 /* ===== GCD Overlay ===== */
-.gcd-overlay { background: rgba(10, 3, 3, 0.92) !important; backdrop-filter: blur(20px) !important; }
+.gcd-overlay { background: rgba(10, 3, 3, 0.92) !important; backdrop-filter: blur(20px) !important; z-index: 10030 !important; }
 .gcd-content { gap: 18px !important; }
 .gcd-boss-icon { font-size: 64px !important; filter: drop-shadow(0 0 25px rgba(255, 100, 0, 0.8)) !important; }
 .gcd-title { color: #ff4400 !important; text-shadow: 0 0 15px rgba(255, 68, 0, 0.6) !important; }
@@ -1492,7 +1578,7 @@ function formatLeaderboardTime(seconds: number): string {
 }
 
 /* ===== 勝利 Overlay ===== */
-.victory-overlay { background: rgba(5, 3, 0, 0.92) !important; backdrop-filter: blur(20px) !important; }
+.victory-overlay { background: rgba(5, 3, 0, 0.92) !important; backdrop-filter: blur(20px) !important; z-index: 10010 !important; }
 .victory-content { gap: 16px !important; }
 .victory-icon { font-size: 80px !important; filter: drop-shadow(0 0 30px rgba(255, 204, 0, 0.8)) !important; animation: victoryBounce 1s ease-in-out infinite !important; }
 .victory-title { color: #ffcc00 !important; text-shadow: 0 0 15px rgba(255, 204, 0, 0.8), 0 0 40px rgba(255, 170, 0, 0.4) !important; font-size: 36px !important; }
@@ -1581,7 +1667,7 @@ function formatLeaderboardTime(seconds: number): string {
 .shop-item.affordable .shop-buy-btn:hover:not(:disabled) { background: linear-gradient(180deg, rgba(120, 90, 30, 1), rgba(50, 30, 5, 1)); border-color: #ffeb3b; box-shadow: 0 0 15px rgba(255, 204, 0, 0.55); transform: translateY(-2px) scale(1.04); }
 
 /* ===== 排行榜彈窗 ===== */
-.leaderboard-overlay { background: rgba(5, 2, 0, 0.93) !important; }
+.leaderboard-overlay { background: rgba(5, 2, 0, 0.93) !important; z-index: 10020 !important; }
 .leaderboard-dialog { width: min(90vw, 420px) !important; background: rgba(20, 8, 8, 0.75) !important; border: 1px solid rgba(255, 255, 255, 0.08) !important; border-top: 2px solid rgba(255, 204, 0, 0.45) !important; border-radius: 16px !important; padding: 35px 25px !important; }
 .rank-crown { font-size: 64px !important; filter: drop-shadow(0 0 15px rgba(255, 204, 0, 0.5)) !important; }
 .score-table { width: 100%; border-collapse: collapse; font-size: 12px; font-family: sans-serif; color: rgba(255, 255, 255, 0.7); }
@@ -1603,4 +1689,22 @@ function formatLeaderboardTime(seconds: number): string {
 .rank-2 .rank-badge { background: rgba(243, 244, 246, 0.08) !important; color: #e5e7eb !important; border-color: rgba(243, 244, 246, 0.3); }
 .rank-3 .rank-badge { background: rgba(217, 119, 6, 0.12) !important; color: #f59e0b !important; border-color: rgba(217, 119, 6, 0.3); }
 .close-leaderboard-btn { color: #ffcc00 !important; border-color: rgba(255, 204, 0, 0.4) !important; }
+
+/* ===== 技能狀態覆蓋特效 ===== */
+.speed-status-overlay {
+  top: 55px !important;
+  border-color: rgba(255, 102, 51, 0.5) !important;
+  color: #ff6633 !important;
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.5), 0 0 12px rgba(255, 102, 51, 0.35) !important;
+  animation: speedStatusPulse 1.5s ease-in-out infinite !important;
+}
+.slow-status-overlay {
+  top: 95px !important;
+  border-color: rgba(255, 204, 0, 0.5) !important;
+  color: #ffcc00 !important;
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.5), 0 0 12px rgba(255, 204, 0, 0.35) !important;
+  animation: slowStatusPulse 1.5s ease-in-out infinite !important;
+}
+@keyframes speedStatusPulse { 0%, 100% { opacity: 0.9; } 50% { opacity: 1; box-shadow: 0 4px 15px rgba(0, 0, 0, 0.5), 0 0 18px rgba(255, 102, 51, 0.55); } }
+@keyframes slowStatusPulse { 0%, 100% { opacity: 0.9; } 50% { opacity: 1; box-shadow: 0 4px 15px rgba(0, 0, 0, 0.5), 0 0 18px rgba(255, 204, 0, 0.55); } }
 </style>
