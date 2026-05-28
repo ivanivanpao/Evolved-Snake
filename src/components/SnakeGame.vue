@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 
+// 向父元件 App.vue 發出模式切換事件
+const emit = defineEmits<{ 'switch-mode': [] }>()
+
 const GRID_SIZE = 20
 
 // 剛進入網頁時的警告遮罩開關，預設為開啟 (true)
@@ -20,7 +23,12 @@ function toggleLeaderboard() {
 
 // 初始化讀取 LocalStorage 中的資料
 if (typeof window !== 'undefined') {
-  tempPlayerId.value = localStorage.getItem('snake_player_id') || ''
+  const savedId = localStorage.getItem('snake_player_id')
+  if (savedId) {
+    playerId.value = savedId
+    tempPlayerId.value = savedId
+    showWarningOverlay.value = false // 已登錄過，直接跳過警告遮罩
+  }
   const savedLeaderboard = localStorage.getItem('snake_leaderboard')
   if (savedLeaderboard) {
     try {
@@ -836,6 +844,14 @@ function handleKeyUp(e: KeyboardEvent) {
 onMounted(() => {
   window.addEventListener('keydown', handleInput)
   window.addEventListener('keyup', handleKeyUp)
+  
+  // 若已登錄（從 Boss 戰切換過來），自動初始化音訊並恢復背景音樂
+  if (playerId.value) {
+    initAudioElements()
+    if (backAudio && bgmEnabled.value) {
+      backAudio.play().catch(() => {})
+    }
+  }
 })
 
 onUnmounted(() => {
@@ -971,6 +987,14 @@ const cells = computed(() => {
             ☀️ 太陽能量: <span class="sun-coin-count">{{ sunCoins }}</span>
           </div>
           
+          <button
+            class="settings-btn boss-mode-btn"
+            @click="emit('switch-mode')"
+            title="切換至 Boss 戰模式"
+          >
+            <span class="settings-btn-icon">⚔️</span>Boss 戰
+          </button>
+
           <button
             class="settings-btn leaderboard-btn"
             :class="{ active: showLeaderboardOverlay }"
@@ -3071,6 +3095,21 @@ const cells = computed(() => {
 .rank-3 .score-val {
   color: #fbbf24 !important;
   text-shadow: 0 0 8px rgba(251, 191, 36, 0.5) !important;
+}
+
+/* ===== ⚔️ Boss 戰模式切換按鈕 ===== */
+.boss-mode-btn {
+  border-color: rgba(255, 80, 0, 0.4) !important;
+  color: rgba(255, 255, 255, 0.8) !important;
+  box-shadow: 0 0 10px rgba(255, 80, 0, 0.1) !important;
+  margin-right: 4px;
+}
+
+.boss-mode-btn:hover {
+  color: #ff6633 !important;
+  border-color: rgba(255, 102, 51, 0.7) !important;
+  box-shadow: 0 0 15px rgba(255, 102, 51, 0.4), 0 0 30px rgba(255, 80, 0, 0.15) !important;
+  text-shadow: 0 0 8px rgba(255, 102, 51, 0.6) !important;
 }
 
 /* ===== 🏆 頂部黃金高分榜按鈕與 GameOver 雙按鈕樣式 ===== */
