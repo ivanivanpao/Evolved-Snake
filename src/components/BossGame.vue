@@ -1441,7 +1441,15 @@ function formatLeaderboardTime(seconds: number): string {
 @keyframes victoryBounce { 0%, 100% { transform: translateY(0) scale(1); } 50% { transform: translateY(-10px) scale(1.1); } }
 
 /* ===== 右側面板 ===== */
-.side-panel { width: 220px; display: flex; flex-direction: column; gap: 12px; padding-top: 40px; }
+.side-panel {
+  width: 220px; display: flex; flex-direction: column; gap: 12px; padding-top: 40px;
+  max-height: 85vh; overflow-y: auto; padding-right: 4px;
+}
+/* 自訂右側面板捲軸 */
+.side-panel::-webkit-scrollbar { width: 6px; }
+.side-panel::-webkit-scrollbar-track { background: rgba(20, 8, 8, 0.4); border-radius: 4px; }
+.side-panel::-webkit-scrollbar-thumb { background: rgba(255, 102, 51, 0.4); border-radius: 4px; }
+.side-panel::-webkit-scrollbar-thumb:hover { background: rgba(255, 102, 51, 0.8); }
 .info-block {
   background: rgba(20, 8, 8, 0.65); backdrop-filter: blur(16px); border: 1px solid rgba(255, 255, 255, 0.06);
   border-top: 1px solid rgba(255, 102, 51, 0.25); border-radius: 12px; padding: 12px 14px;
