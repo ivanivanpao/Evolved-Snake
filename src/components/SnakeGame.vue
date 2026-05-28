@@ -2,7 +2,11 @@
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 
 // 向父元件 App.vue 發出模式切換事件
-const emit = defineEmits<{ 'switch-mode': [] }>()
+const props = defineProps<{ hasEnteredGame: boolean }>()
+const emit = defineEmits<{ 
+  (e: 'switch-mode'): void
+  (e: 'enter-game'): void
+}>()
 
 const GRID_SIZE = 20
 
@@ -27,7 +31,9 @@ if (typeof window !== 'undefined') {
   if (savedId) {
     playerId.value = savedId
     tempPlayerId.value = savedId
-    showWarningOverlay.value = false // 已登錄過，直接跳過警告遮罩
+    if (props.hasEnteredGame) {
+      showWarningOverlay.value = false // 已登錄過且進入過遊戲，才直接跳過警告遮罩
+    }
   }
   const savedLeaderboard = localStorage.getItem('snake_leaderboard')
   if (savedLeaderboard) {
@@ -59,11 +65,20 @@ function closeWarningOverlay() {
     }
   }
   
-  // 2. 顯示輸入玩家 ID 的 Overlay 遮罩
-  showIdOverlay.value = true
-  
   // 3. 同步初始化 Audio 實例，為點擊登錄時的正式播放做足預載準備
   initAudioElements()
+  
+  if (playerId.value) {
+    isAudioUnlocked.value = true
+    playStartSound()
+    if (backAudio && bgmEnabled.value) {
+      backAudio.play().catch((e) => { console.warn('背景音樂播放被瀏覽器阻擋:', e) })
+    }
+    emit('enter-game')
+  } else {
+    // 2. 顯示輸入玩家 ID 的 Overlay 遮罩
+    showIdOverlay.value = true
+  }
 }
 
 // 確認登錄玩家 ID 邏輯
@@ -95,6 +110,7 @@ function submitPlayerId() {
       console.warn('背景音樂播放被瀏覽器阻擋，將於使用者操作後重試:', e)
     })
   }
+  emit('enter-game')
 }
 
 const snake = ref([

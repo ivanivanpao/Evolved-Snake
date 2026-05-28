@@ -2,7 +2,11 @@
 import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 
 // 向父元件 App.vue 發出模式切換事件
-const emit = defineEmits<{ 'switch-mode': [] }>()
+const props = defineProps<{ hasEnteredGame: boolean }>()
+const emit = defineEmits<{ 
+  (e: 'switch-mode'): void
+  (e: 'enter-game'): void
+}>()
 
 // ===== 常數定義 =====
 const GRID_SIZE = 20
@@ -20,7 +24,9 @@ if (typeof window !== 'undefined') {
   if (savedId) {
     playerId.value = savedId
     tempPlayerId.value = savedId
-    showWarningOverlay.value = false // 已登錄過，直接跳過
+    if (props.hasEnteredGame) {
+      showWarningOverlay.value = false // 已在當前連線登錄過，直接跳過
+    }
   }
 }
 
@@ -130,8 +136,18 @@ function closeWarningOverlay() {
     }
     if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume().catch(() => {})
   }
-  showIdOverlay.value = true
   initAudioElements()
+  
+  if (playerId.value) {
+    isAudioUnlocked.value = true
+    playStartSound()
+    if (backAudio && bgmEnabled.value) {
+      backAudio.play().catch(() => {})
+    }
+    emit('enter-game')
+  } else {
+    showIdOverlay.value = true
+  }
 }
 
 function submitPlayerId() {
@@ -148,6 +164,7 @@ function submitPlayerId() {
   if (backAudio && bgmEnabled.value) {
     backAudio.play().catch(() => {})
   }
+  emit('enter-game')
 }
 
 // ===== 音訊系統 =====
@@ -612,11 +629,14 @@ function handleBossVictory() {
 }
 
 function saveBossTimeToLeaderboard() {
+  if (bossElapsedTime.value <= 0) return // 不儲存異常或未通關的成績
   const currentName = playerId.value.trim() || '無名戰神'
   if (typeof window === 'undefined') return
   const saved = localStorage.getItem('snake_boss_leaderboard')
   let boardList: any[] = []
   if (saved) { try { boardList = JSON.parse(saved) } catch (e) { /* 忽略 */ } }
+  // 順手清理任何可能殘留的未通關 00:00 異常紀錄
+  boardList = boardList.filter(r => r.time > 0)
   boardList.push({
     name: currentName,
     time: bossElapsedTime.value,
@@ -753,7 +773,14 @@ onMounted(() => {
   if (typeof window !== 'undefined') {
     const savedBossBoard = localStorage.getItem('snake_boss_leaderboard')
     if (savedBossBoard) {
-      try { bossLeaderboard.value = JSON.parse(savedBossBoard) } catch (e) { /* 忽略 */ }
+      try { 
+        const parsed = JSON.parse(savedBossBoard)
+        // 自動濾除 00:00 異常資料並寫回 localStorage
+        bossLeaderboard.value = parsed.filter((r: any) => r.time > 0)
+        if (bossLeaderboard.value.length !== parsed.length) {
+          localStorage.setItem('snake_boss_leaderboard', JSON.stringify(bossLeaderboard.value))
+        }
+      } catch (e) { /* 忽略 */ }
     }
   }
   // 若已登錄（從經典模式切換過來），自動初始化音訊
