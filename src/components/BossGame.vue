@@ -65,6 +65,7 @@ const gcdInputRef = ref<HTMLInputElement | null>(null)
 
 // ===== 太陽能量與護盾 =====
 const sunCoins = ref(0)
+const projectileSpeed = ref(400) // 砲彈移動的反應式時間間隔 (ms)
 const shieldActive = ref(false)
 const shieldTimeLeft = ref(0)
 let shieldTimer: number | null = null
@@ -321,6 +322,27 @@ function playPeelSound() {
   } catch (e) { /* 忽略 */ }
 }
 
+// 太陽神速加速音效：高頻率順滑上行滑音
+function playSpeedSound() {
+  if (!sfxEnabled.value || typeof window === 'undefined') return
+  try {
+    const WA = window.AudioContext || (window as any).webkitAudioContext
+    if (!WA) return
+    if (!audioCtx) audioCtx = new WA()
+    if (audioCtx.state === 'suspended') audioCtx.resume()
+    const osc = audioCtx.createOscillator()
+    const gain = audioCtx.createGain()
+    osc.connect(gain); gain.connect(audioCtx.destination)
+    osc.type = 'sine'
+    const now = audioCtx.currentTime
+    osc.frequency.setValueAtTime(350, now)
+    osc.frequency.exponentialRampToValueAtTime(1400, now + 0.15)
+    gain.gain.setValueAtTime(0.35 * sfxVolume.value, now)
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.15)
+    osc.start(now); osc.stop(now + 0.15)
+  } catch (e) { /* 忽略 */ }
+}
+
 // 烈日緩速音效
 function playSlowSound() {
   if (!sfxEnabled.value || typeof window === 'undefined') return
@@ -367,22 +389,27 @@ function playShieldSound() {
 }
 
 // ===== 太陽神殿技能 =====
-function usePeelSkill() {
+function useSunSpeedSkill() {
   if (sunCoins.value < 1) return
   sunCoins.value -= 1
-  playPeelSound()
-  const keepCount = Math.max(3, Math.ceil(snake.value.length * 0.7))
-  snake.value = snake.value.slice(0, keepCount)
+  playSpeedSound()
+  // 立刻加速當前移動速度的兩倍（即將移動間隔時間除以二，最低限制 50ms）
+  speed.value = Math.max(50, Math.floor(speed.value / 2))
+  if (gameStatus.value === 'playing' && gameInterval) {
+    clearInterval(gameInterval)
+    gameInterval = setInterval(gameLoop, speed.value) as unknown as number
+  }
 }
 
 function useSlowDownSkill() {
   if (sunCoins.value < 2) return
   sunCoins.value -= 2
   playSlowSound()
-  speed.value = Math.min(baseSpeed, speed.value + 50)
-  if (gameStatus.value === 'playing' && gameInterval) {
-    clearInterval(gameInterval)
-    gameInterval = setInterval(gameLoop, speed.value) as unknown as number
+  // 增加砲彈的移動時間間隔 50ms（即降低移動速度，最高不可超過 600ms）
+  projectileSpeed.value = Math.min(600, projectileSpeed.value + 50)
+  if (gameStatus.value === 'playing' && bossProjectileMoveInterval) {
+    clearInterval(bossProjectileMoveInterval)
+    bossProjectileMoveInterval = setInterval(moveProjectiles, projectileSpeed.value) as unknown as number
   }
 }
 
@@ -407,6 +434,7 @@ function useShieldSkill() {
 // ===== 初始化 Boss 遊戲 =====
 function initBossGame() {
   speed.value = baseSpeed
+  projectileSpeed.value = 400 // 重置日冕砲彈預設速度為 400ms
   snake.value = [
     { x: 10, y: 3 },
     { x: 9, y: 3 },
@@ -481,6 +509,10 @@ function moveBossSnake() {
   if (newHead.x === food.value.x && newHead.y === food.value.y) {
     playEatSound()
     generateBossFood()
+    // 有 30% 的機率額外獲得 1 點太陽能量
+    if (Math.random() < 0.3) {
+      sunCoins.value++
+    }
     // 不移除尾巴 → 蛇身長度 +1
   } else {
     snake.value.pop() // 正常移動，維持長度
@@ -595,7 +627,7 @@ function submitGcdAnswer() {
 function resumeFromGcd() {
   gameInterval = setInterval(gameLoop, speed.value) as unknown as number
   bossShootInterval = setInterval(fireProjectile, 1500) as unknown as number
-  bossProjectileMoveInterval = setInterval(moveProjectiles, 400) as unknown as number
+  bossProjectileMoveInterval = setInterval(moveProjectiles, projectileSpeed.value) as unknown as number
 }
 
 // 自動聚焦 GCD 輸入框
@@ -669,7 +701,7 @@ function startBossGame() {
   gameStatus.value = 'playing'
   gameInterval = setInterval(gameLoop, speed.value) as unknown as number
   bossShootInterval = setInterval(fireProjectile, 1500) as unknown as number
-  bossProjectileMoveInterval = setInterval(moveProjectiles, 400) as unknown as number
+  bossProjectileMoveInterval = setInterval(moveProjectiles, projectileSpeed.value) as unknown as number
   startBossTimers()
   playStartSound()
 }
@@ -686,7 +718,7 @@ function resumeBossGame() {
     gameStatus.value = 'playing'
     gameInterval = setInterval(gameLoop, speed.value) as unknown as number
     bossShootInterval = setInterval(fireProjectile, 1500) as unknown as number
-    bossProjectileMoveInterval = setInterval(moveProjectiles, 400) as unknown as number
+    bossProjectileMoveInterval = setInterval(moveProjectiles, projectileSpeed.value) as unknown as number
     startBossTimers()
     playStartSound()
   }
@@ -728,7 +760,7 @@ function handleInput(e: KeyboardEvent) {
 
   const key = e.key.toLowerCase()
   // 太陽神殿技能快捷鍵
-  if (e.key === 'Shift') { e.preventDefault(); usePeelSkill(); return }
+  if (e.key === 'Shift') { e.preventDefault(); useSunSpeedSkill(); return }
   if (key === 'q') { useSlowDownSkill(); return }
   if (key === 'e') { useShieldSkill(); return }
 
@@ -1115,19 +1147,19 @@ function formatLeaderboardTime(seconds: number): string {
           <h2 class="info-title">⛩️ 太陽神殿</h2>
           <div class="temple-shop">
             <div class="shop-item" :class="{ affordable: sunCoins >= 1 }">
-              <div class="shop-item-info"><span class="shop-item-title">🐍 太陽蛻皮</span><span class="shop-item-desc">縮短身體 30%</span></div>
-              <button class="shop-buy-btn" :disabled="sunCoins < 1 || gameStatus !== 'playing'" @click="usePeelSkill">
+              <div class="shop-item-info"><span class="shop-item-title">⚡ 太陽神速</span><span class="shop-item-desc">速度立刻加倍</span></div>
+              <button class="shop-buy-btn" :disabled="sunCoins < 1 || gameStatus !== 'playing'" @click="useSunSpeedSkill">
                 <span class="cost">1 ☀️</span><kbd class="shop-kbd">Shift</kbd>
               </button>
             </div>
             <div class="shop-item" :class="{ affordable: sunCoins >= 2 }">
-              <div class="shop-item-info"><span class="shop-item-title">⏳ 烈日緩速</span><span class="shop-item-desc">移動間隔 +50ms</span></div>
+              <div class="shop-item-info"><span class="shop-item-title">⏳ 烈日緩速</span><span class="shop-item-desc">砲彈移動間隔 +50ms</span></div>
               <button class="shop-buy-btn" :disabled="sunCoins < 2 || gameStatus !== 'playing'" @click="useSlowDownSkill">
                 <span class="cost">2 ☀️</span><kbd class="shop-kbd">Q</kbd>
               </button>
             </div>
             <div class="shop-item" :class="{ affordable: sunCoins >= 3 }">
-              <div class="shop-item-info"><span class="shop-item-title">🛡️ 日冕護盾</span><span class="shop-item-desc">5秒無敵穿透</span></div>
+              <div class="shop-item-info"><span class="shop-item-title">🛡️ 日冕護盾</span><span class="shop-item-desc">5秒無敵/白金流光/穿透</span></div>
               <button class="shop-buy-btn" :disabled="sunCoins < 3 || gameStatus !== 'playing'" @click="useShieldSkill">
                 <span class="cost">3 ☀️</span><kbd class="shop-kbd">E</kbd>
               </button>
@@ -1400,9 +1432,9 @@ function formatLeaderboardTime(seconds: number): string {
 }
 
 /* ===== 護盾狀態 ===== */
-.shield-active-board .snake { background: linear-gradient(180deg, #fff 0%, #fff6d6 30%, #ffd966 60%, #cca010 100%) !important; box-shadow: 0 0 16px rgba(255, 215, 0, 0.95), 0 0 32px rgba(255, 240, 150, 0.6) !important; animation: goldShieldFlow 1.2s ease-in-out infinite alternate !important; }
-.shield-active-board .snake-head { background: radial-gradient(ellipse at 30% 30%, #fff 0%, #ffe894 50%, #cca010 100%) !important; box-shadow: 0 0 25px rgba(255, 215, 0, 1), 0 0 50px rgba(255, 245, 170, 0.85) !important; animation: goldShieldFlow 1.2s ease-in-out infinite alternate !important; }
-@keyframes goldShieldFlow { 0% { filter: brightness(1); } 100% { filter: brightness(1.2) drop-shadow(0 0 8px rgba(255, 255, 255, 0.9)); } }
+.shield-active-board .snake { background: linear-gradient(270deg, #ffffff, #e5e7eb, #ffd700, #f59e0b, #ffffff) !important; background-size: 400% 400% !important; box-shadow: 0 0 20px rgba(255, 215, 0, 0.95), 0 0 35px rgba(255, 255, 255, 0.75), inset 0 1px 3px rgba(255, 255, 255, 0.6) !important; animation: goldShieldFlow 1.2s ease-in-out infinite alternate, snakeEnergyFlow 1.5s ease infinite !important; }
+.shield-active-board .snake-head { background: radial-gradient(ellipse at 30% 30%, #ffffff 0%, #ffe066 50%, #cca010 100%) !important; box-shadow: 0 0 30px rgba(255, 215, 0, 1), 0 0 50px rgba(255, 255, 255, 0.9) !important; animation: goldShieldFlow 1.2s ease-in-out infinite alternate !important; }
+@keyframes goldShieldFlow { 0% { filter: brightness(1); } 100% { filter: brightness(1.25) drop-shadow(0 0 10px rgba(255, 255, 255, 0.95)); } }
 .shield-status-overlay {
   position: absolute; top: 15px; left: 50%; transform: translateX(-50%);
   background: rgba(20, 15, 5, 0.85); backdrop-filter: blur(8px); border: 1px solid rgba(255, 215, 0, 0.5);
