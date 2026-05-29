@@ -21,9 +21,6 @@ let localClassicLeaderboard: ClassicRecord[] = [];
 
 let localBossLeaderboard: BossRecord[] = [];
 
-// 檢查是否處於 Vercel 生產環境（即已連結 Vercel KV）
-const isKvConfigured = !!(process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN);
-
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   // 設置 CORS 頭部以允許前端流暢請求
   res.setHeader('Access-Control-Allow-Credentials', 'true');
@@ -47,15 +44,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (req.method === 'GET') {
       let classicList: ClassicRecord[] = [];
       let bossList: BossRecord[] = [];
+      let usedRedis = false;
 
-      if (isKvConfigured) {
-        // 從 Vercel Redis 資料庫撈取
+      try {
+        // 直接嘗試從 Vercel Redis 資料庫撈取
         const savedClassic = await kv.get<ClassicRecord[]>('snake_global_classic_board');
         const savedBoss = await kv.get<BossRecord[]>('snake_global_boss_board');
         classicList = savedClassic || [];
         bossList = savedBoss || [];
-      } else {
-        // 本地降備模擬數據
+        usedRedis = true;
+      } catch (redisError) {
+        console.warn('無法連線至 Vercel KV Redis，啟用本地記憶體降備:', redisError);
+        // 連不上時（如本地開發），自動降級採用本地記憶體暫存
         classicList = localClassicLeaderboard;
         bossList = localBossLeaderboard;
       }
@@ -64,7 +64,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         success: true,
         classic: classicList,
         boss: bossList,
-        mode: isKvConfigured ? 'production_redis' : 'local_mock'
+        mode: usedRedis ? 'production_redis' : 'local_mock'
       });
     }
 
@@ -76,13 +76,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const cleanName = (name || '無名戰神').trim().substring(0, 12); // ID 長度限制 12
 
       if (mode === 'classic') {
-        // 經典高分榜處理邏輯
         const newScore = Math.max(0, parseInt(score, 10) || 0);
         let board: ClassicRecord[] = [];
+        let usedRedis = false;
 
-        if (isKvConfigured) {
+        try {
+          // 嘗試從 Redis 讀取
           board = (await kv.get<ClassicRecord[]>('snake_global_classic_board')) || [];
-        } else {
+          usedRedis = true;
+        } catch (e) {
           board = [...localClassicLeaderboard];
         }
 
@@ -95,8 +97,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         // 精確保留前 5 名
         const trimmedBoard = board.slice(0, 5);
 
-        if (isKvConfigured) {
-          await kv.set('snake_global_classic_board', trimmedBoard);
+        if (usedRedis) {
+          try {
+            await kv.set('snake_global_classic_board', trimmedBoard);
+          } catch (writeError) {
+            console.error('寫入 Redis 失敗，改存本地記憶體:', writeError);
+            localClassicLeaderboard = trimmedBoard;
+          }
         } else {
           localClassicLeaderboard = trimmedBoard;
         }
@@ -105,13 +112,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       } 
       
       else if (mode === 'boss') {
-        // Boss 速度榜處理邏輯
         const newTime = Math.max(1, parseInt(time, 10) || 0);
         let board: BossRecord[] = [];
+        let usedRedis = false;
 
-        if (isKvConfigured) {
+        try {
           board = (await kv.get<BossRecord[]>('snake_global_boss_board')) || [];
-        } else {
+          usedRedis = true;
+        } catch (e) {
           board = [...localBossLeaderboard];
         }
 
@@ -145,8 +153,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         // 精確保留前 5 名
         const trimmedBoard = uniqueRecords.slice(0, 5);
 
-        if (isKvConfigured) {
-          await kv.set('snake_global_boss_board', trimmedBoard);
+        if (usedRedis) {
+          try {
+            await kv.set('snake_global_boss_board', trimmedBoard);
+          } catch (writeError) {
+            console.error('寫入 Redis 失敗，改存本地記憶體:', writeError);
+            localBossLeaderboard = trimmedBoard;
+          }
         } else {
           localBossLeaderboard = trimmedBoard;
         }
