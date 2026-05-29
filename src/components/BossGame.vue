@@ -102,6 +102,28 @@ const pressedKeys = ref<Record<string, boolean>>({})
 // ===== 排行榜 =====
 const bossLeaderboard = ref<Array<{ name: string; time: number; date: string }>>([])
 const showLeaderboardOverlay = ref(false)
+const isLoadingLeaderboard = ref(false)
+
+async function fetchGlobalLeaderboard() {
+  isLoadingLeaderboard.value = true
+  try {
+    const res = await fetch('/api/leaderboard')
+    const data = await res.json()
+    if (data && data.success) {
+      bossLeaderboard.value = data.boss || []
+    }
+  } catch (e) {
+    console.warn('讀取世界速度榜失敗，正在嘗試從本地讀取降備:', e)
+    const saved = localStorage.getItem('snake_boss_leaderboard')
+    if (saved) {
+      try {
+        bossLeaderboard.value = JSON.parse(saved)
+      } catch (_) {}
+    }
+  } finally {
+    isLoadingLeaderboard.value = false
+  }
+}
 
 // ===== 計時器參照 =====
 let gameInterval: number | null = null
@@ -695,14 +717,17 @@ function handleBossVictory() {
   saveBossTimeToLeaderboard()
 }
 
-function saveBossTimeToLeaderboard() {
+async function saveBossTimeToLeaderboard() {
   if (bossElapsedTime.value <= 0) return // 不儲存異常或未通關的成績
   const currentName = playerId.value.trim() || '無名戰神'
+  const dateStr = new Date().toLocaleDateString('zh-TW', { month: '2-digit', day: '2-digit' })
+  
   if (typeof window === 'undefined') return
+  
+  // 1. 同步寫入本地備份（保障在斷網環境下也能正常紀錄）
   const saved = localStorage.getItem('snake_boss_leaderboard')
   let boardList: any[] = []
   if (saved) { try { boardList = JSON.parse(saved) } catch (e) { /* 忽略 */ } }
-  // 順手清理任何可能殘留的未通關 00:00 異常紀錄
   boardList = boardList.filter(r => r.time > 0)
   
   // 同一個 ID 直接覆蓋為個人最佳紀錄 (取通關時間最短者)
@@ -710,13 +735,13 @@ function saveBossTimeToLeaderboard() {
   if (existingIndex !== -1) {
     if (bossElapsedTime.value < boardList[existingIndex].time) {
       boardList[existingIndex].time = bossElapsedTime.value
-      boardList[existingIndex].date = new Date().toLocaleDateString('zh-TW', { month: '2-digit', day: '2-digit' })
+      boardList[existingIndex].date = dateStr
     }
   } else {
     boardList.push({
       name: currentName,
       time: bossElapsedTime.value,
-      date: new Date().toLocaleDateString('zh-TW', { month: '2-digit', day: '2-digit' })
+      date: dateStr
     })
   }
 
@@ -736,7 +761,31 @@ function saveBossTimeToLeaderboard() {
   uniqueRecords.sort((a: any, b: any) => a.time - b.time) // 升序排列（最快的在前）
   const trimmed = uniqueRecords.slice(0, 5)
   localStorage.setItem('snake_boss_leaderboard', JSON.stringify(trimmed))
-  bossLeaderboard.value = trimmed
+  
+  // 2. 非同步 POST 提交到全網聯網世界速度排行榜
+  try {
+    const response = await fetch('/api/leaderboard', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        name: currentName,
+        time: bossElapsedTime.value,
+        mode: 'boss',
+        date: dateStr
+      })
+    })
+    const data = await response.json()
+    if (data && data.success) {
+      bossLeaderboard.value = data.leaderboard || []
+    } else {
+      bossLeaderboard.value = trimmed
+    }
+  } catch (e) {
+    console.warn('非同步上傳世界速度榜失敗，改為採用本地備份:', e)
+    bossLeaderboard.value = trimmed
+  }
 }
 
 // ===== Game Over =====
@@ -856,7 +905,13 @@ function toggleBgm() {
 function toggleSfx() { sfxEnabled.value = !sfxEnabled.value; unlockAudio() }
 function toggleStart() { startEnabled.value = !startEnabled.value; unlockAudio() }
 function toggleOmg() { omgEnabled.value = !omgEnabled.value; unlockAudio() }
-function toggleLeaderboard() { showLeaderboardOverlay.value = !showLeaderboardOverlay.value; unlockAudio() }
+function toggleLeaderboard() { 
+  showLeaderboardOverlay.value = !showLeaderboardOverlay.value; 
+  unlockAudio(); 
+  if (showLeaderboardOverlay.value) {
+    fetchGlobalLeaderboard();
+  }
+}
 
 watch(bgmVolume, (v) => { if (backAudio) backAudio.volume = v })
 
@@ -864,33 +919,10 @@ watch(bgmVolume, (v) => { if (backAudio) backAudio.volume = v })
 onMounted(() => {
   window.addEventListener('keydown', handleInput)
   window.addEventListener('keyup', handleKeyUp)
-  // 從 localStorage 讀取 Boss 速度排行榜並進行重名清洗與去重
-  if (typeof window !== 'undefined') {
-    const savedBossBoard = localStorage.getItem('snake_boss_leaderboard')
-    if (savedBossBoard) {
-      try { 
-        const parsed = JSON.parse(savedBossBoard)
-        const validRecords = parsed.filter((r: any) => r.time > 0)
-        
-        // 歷史重名資料清洗：每個 ID 只保留個人最佳（時間最短）的紀錄
-        const uniqueRecords: any[] = []
-        for (const r of validRecords) {
-          const idx = uniqueRecords.findIndex(u => u.name === r.name)
-          if (idx !== -1) {
-            if (r.time < uniqueRecords[idx].time) {
-              uniqueRecords[idx] = r
-            }
-          } else {
-            uniqueRecords.push(r)
-          }
-        }
-        
-        uniqueRecords.sort((a: any, b: any) => a.time - b.time)
-        bossLeaderboard.value = uniqueRecords.slice(0, 5)
-        localStorage.setItem('snake_boss_leaderboard', JSON.stringify(bossLeaderboard.value))
-      } catch (e) { /* 忽略 */ }
-    }
-  }
+  
+  // 首次嘗試獲取雲端速度排行榜
+  fetchGlobalLeaderboard()
+  
   // 若已登錄（從經典模式切換過來），自動初始化音訊
   if (playerId.value) {
     initAudioElements()
@@ -972,9 +1004,20 @@ function formatLeaderboardTime(seconds: number): string {
       <div v-if="showLeaderboardOverlay" class="warning-overlay leaderboard-overlay" @click.self="showLeaderboardOverlay = false">
         <div class="warning-content leaderboard-dialog">
           <div class="sunglasses-icon rank-crown">⚡</div>
-          <p class="warning-text">Boss 速度榜</p>
-          <p class="volume-warning-text">通關最快的前五名菁英戰神</p>
-          <table class="score-table popup-table">
+          <p class="warning-text">世界 Boss 速度榜</p>
+          <p class="volume-warning-text">🌐 全球通關最快的前五名菁英戰神</p>
+          
+          <!-- 骨架屏載入動畫 -->
+          <div v-if="isLoadingLeaderboard" class="skeleton-container">
+            <div v-for="i in 5" :key="i" class="skeleton-row">
+              <div class="skeleton-badge"></div>
+              <div class="skeleton-name"></div>
+              <div class="skeleton-score"></div>
+              <div class="skeleton-date"></div>
+            </div>
+          </div>
+          
+          <table v-else class="score-table popup-table">
             <thead>
               <tr>
                 <th class="th-rank">排名</th>
@@ -1707,4 +1750,75 @@ function formatLeaderboardTime(seconds: number): string {
 }
 @keyframes speedStatusPulse { 0%, 100% { opacity: 0.9; } 50% { opacity: 1; box-shadow: 0 4px 15px rgba(0, 0, 0, 0.5), 0 0 18px rgba(255, 102, 51, 0.55); } }
 @keyframes slowStatusPulse { 0%, 100% { opacity: 0.9; } 50% { opacity: 1; box-shadow: 0 4px 15px rgba(0, 0, 0, 0.5), 0 0 18px rgba(255, 204, 0, 0.55); } }
+
+/* 骨架屏載入樣式 */
+.skeleton-container {
+  width: 100%;
+  padding: 15px 0 25px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.skeleton-row {
+  display: flex;
+  align-items: center;
+  height: 43px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  position: relative;
+  overflow: hidden;
+}
+
+.skeleton-row::after {
+  content: "";
+  position: absolute;
+  top: 0; right: 0; bottom: 0; left: 0;
+  background: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0) 0%,
+    rgba(255, 255, 255, 0.08) 50%,
+    rgba(255, 255, 255, 0) 100%
+  );
+  animation: skeleton-shimmer 1.6s infinite ease-in-out;
+}
+
+@keyframes skeleton-shimmer {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+
+.skeleton-badge { 
+  width: 22px; 
+  height: 22px; 
+  border-radius: 4px; 
+  background: rgba(255, 255, 255, 0.08); 
+  margin-left: 10px; 
+}
+
+.skeleton-name { 
+  width: 110px; 
+  height: 14px; 
+  border-radius: 4px; 
+  background: rgba(255, 255, 255, 0.08); 
+  margin-left: 20px; 
+}
+
+.skeleton-score { 
+  width: 50px; 
+  height: 14px; 
+  border-radius: 4px; 
+  background: rgba(255, 255, 255, 0.08); 
+  margin-left: auto; 
+  margin-right: 35px; 
+}
+
+.skeleton-date { 
+  width: 42px; 
+  height: 12px; 
+  border-radius: 4px; 
+  background: rgba(255, 255, 255, 0.08); 
+  margin-right: 10px; 
+}
 </style>

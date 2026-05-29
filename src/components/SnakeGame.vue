@@ -19,10 +19,35 @@ const tempPlayerId = ref('')
 const showIdOverlay = ref(false)
 const showLeaderboardOverlay = ref(false)
 const leaderboard = ref<Array<{ name: string; score: number; date: string }>>([])
+const isLoadingLeaderboard = ref(false)
+
+async function fetchGlobalLeaderboard() {
+  isLoadingLeaderboard.value = true
+  try {
+    const res = await fetch('/api/leaderboard')
+    const data = await res.json()
+    if (data && data.success) {
+      leaderboard.value = data.classic || []
+    }
+  } catch (e) {
+    console.warn('讀取世界排行榜失敗，正在嘗試從本地讀取降備:', e)
+    const saved = localStorage.getItem('snake_leaderboard')
+    if (saved) {
+      try {
+        leaderboard.value = JSON.parse(saved)
+      } catch (_) {}
+    }
+  } finally {
+    isLoadingLeaderboard.value = false
+  }
+}
 
 function toggleLeaderboard() {
   showLeaderboardOverlay.value = !showLeaderboardOverlay.value
   unlockAudio() // 點擊時同步預載並解鎖音效，優雅升級 Autoplay 體驗
+  if (showLeaderboardOverlay.value) {
+    fetchGlobalLeaderboard()
+  }
 }
 
 // 初始化讀取 LocalStorage 中的資料
@@ -35,14 +60,8 @@ if (typeof window !== 'undefined') {
       showWarningOverlay.value = false // 已登錄過且進入過遊戲，才直接跳過警告遮罩
     }
   }
-  const savedLeaderboard = localStorage.getItem('snake_leaderboard')
-  if (savedLeaderboard) {
-    try {
-      leaderboard.value = JSON.parse(savedLeaderboard)
-    } catch (e) {
-      console.warn('讀取排行榜失敗:', e)
-    }
-  }
+  // 首次嘗試獲取伺服器上的全球排行榜
+  fetchGlobalLeaderboard()
 }
 
 function closeWarningOverlay() {
@@ -730,13 +749,15 @@ function moveSnake() {
   }
 }
 
-// 儲存玩家得分至本地高分榜
-function saveScoreToLeaderboard() {
+// 儲存玩家得分至聯網世界高分榜（同時保留本地 localStorage 高可用備份）
+async function saveScoreToLeaderboard() {
   const currentName = playerId.value.trim() || '無名戰神'
   const currentScore = score.value
+  const dateStr = new Date().toLocaleDateString('zh-TW', { month: '2-digit', day: '2-digit' })
   
   if (typeof window === 'undefined') return
   
+  // 1. 同步寫入本地備份（保障在斷網環境下也能正常紀錄）
   const saved = localStorage.getItem('snake_leaderboard')
   let boardList = []
   if (saved) {
@@ -747,20 +768,40 @@ function saveScoreToLeaderboard() {
     }
   }
   
-  // 新增本次佳績
   boardList.push({
     name: currentName,
     score: currentScore,
-    date: new Date().toLocaleDateString('zh-TW', { month: '2-digit', day: '2-digit' })
+    date: dateStr
   })
   
-  // 降序排序
   boardList.sort((a: any, b: any) => b.score - a.score)
-  
-  // 只精確保留前 5 名最頂級的成就
   const trimmed = boardList.slice(0, 5)
   localStorage.setItem('snake_leaderboard', JSON.stringify(trimmed))
-  leaderboard.value = trimmed
+  
+  // 2. 非同步 POST 提交到全網聯網世界排行榜
+  try {
+    const response = await fetch('/api/leaderboard', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        name: currentName,
+        score: currentScore,
+        mode: 'classic',
+        date: dateStr
+      })
+    })
+    const data = await response.json()
+    if (data && data.success) {
+      leaderboard.value = data.leaderboard || []
+    } else {
+      leaderboard.value = trimmed
+    }
+  } catch (e) {
+    console.warn('非同步上傳世界排行榜失敗，改為採用本地備份:', e)
+    leaderboard.value = trimmed
+  }
 }
 
 function gameOver() {
@@ -962,10 +1003,20 @@ const cells = computed(() => {
       <div v-if="showLeaderboardOverlay" class="warning-overlay leaderboard-overlay" @click.self="showLeaderboardOverlay = false">
         <div class="warning-content leaderboard-dialog">
           <div class="sunglasses-icon rank-crown">🏆</div>
-          <p class="warning-text">太陽神殿高分榜</p>
-          <p class="volume-warning-text">記載前五名至高戰功的英雄殿堂</p>
+          <p class="warning-text">世界高分排行榜</p>
+          <p class="volume-warning-text">🌐 全球頂尖五大戰神殿堂</p>
           
-          <table class="score-table popup-table">
+          <!-- 骨架屏載入動畫 -->
+          <div v-if="isLoadingLeaderboard" class="skeleton-container">
+            <div v-for="i in 5" :key="i" class="skeleton-row">
+              <div class="skeleton-badge"></div>
+              <div class="skeleton-name"></div>
+              <div class="skeleton-score"></div>
+              <div class="skeleton-date"></div>
+            </div>
+          </div>
+          
+          <table v-else class="score-table popup-table">
             <thead>
               <tr>
                 <th class="th-rank">排名</th>
@@ -3281,6 +3332,77 @@ const cells = computed(() => {
   color: rgba(255, 255, 255, 0.45);
   font-family: 'Orbitron', sans-serif;
   font-size: 11px;
+}
+
+/* 骨架屏載入樣式 */
+.skeleton-container {
+  width: 100%;
+  padding: 15px 0 25px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.skeleton-row {
+  display: flex;
+  align-items: center;
+  height: 43px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  position: relative;
+  overflow: hidden;
+}
+
+.skeleton-row::after {
+  content: "";
+  position: absolute;
+  top: 0; right: 0; bottom: 0; left: 0;
+  background: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0) 0%,
+    rgba(255, 255, 255, 0.08) 50%,
+    rgba(255, 255, 255, 0) 100%
+  );
+  animation: skeleton-shimmer 1.6s infinite ease-in-out;
+}
+
+@keyframes skeleton-shimmer {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+
+.skeleton-badge { 
+  width: 22px; 
+  height: 22px; 
+  border-radius: 50%; 
+  background: rgba(255, 255, 255, 0.08); 
+  margin-left: 10px; 
+}
+
+.skeleton-name { 
+  width: 110px; 
+  height: 14px; 
+  border-radius: 4px; 
+  background: rgba(255, 255, 255, 0.08); 
+  margin-left: 20px; 
+}
+
+.skeleton-score { 
+  width: 50px; 
+  height: 14px; 
+  border-radius: 4px; 
+  background: rgba(255, 255, 255, 0.08); 
+  margin-left: auto; 
+  margin-right: 35px; 
+}
+
+.skeleton-date { 
+  width: 42px; 
+  height: 12px; 
+  border-radius: 4px; 
+  background: rgba(255, 255, 255, 0.08); 
+  margin-right: 10px; 
 }
 
 .close-leaderboard-btn {
