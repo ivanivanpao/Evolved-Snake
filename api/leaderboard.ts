@@ -17,17 +17,9 @@ interface BossRecord {
 // ==========================================
 // 🚀 本地開發記憶體降備儲存（在無 Redis 環境下運作）
 // ==========================================
-let localClassicLeaderboard: ClassicRecord[] = [
-  { name: '太陽戰神', score: 280, date: '05/27' },
-  { name: '墨鏡大師', score: 180, date: '05/28' },
-  { name: '貪食蛇專家', score: 120, date: '05/29' }
-];
+let localClassicLeaderboard: ClassicRecord[] = [];
 
-let localBossLeaderboard: BossRecord[] = [
-  { name: '光速少年', time: 48, date: '05/27' },
-  { name: '最大公因數專家', time: 72, date: '05/28' },
-  { name: '護盾大師', time: 105, date: '05/29' }
-];
+let localBossLeaderboard: BossRecord[] = [];
 
 // 檢查是否處於 Vercel 生產環境（即已連結 Vercel KV）
 const isKvConfigured = !!(process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN);
