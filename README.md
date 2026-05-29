@@ -1,7 +1,7 @@
 # Evolved Snake
 
 ## Vercel Link
-貼上你的 Vercel 連結
+https://evolved-snake-livid.vercel.app/
 
 ## Design Concept
 一般的貪吃蛇就是吃了會變長，然後撞到自己或牆壁就會死亡，實在有點無趣
